@@ -1,0 +1,9 @@
+node_modules
+/dist
+/apps/web/dist
+/apps/api/dist
+.wrangler
+.DS_Store
+.env
+.env.*
+.dev.vars

@@ -1,0 +1,34 @@
+name = "word-of-the-day-api"
+main = "src/index.ts"
+compatibility_date = "2024-07-25"
+node_compat = true
+
+[vars]
+APP_ENV = "development"
+CORS_ALLOW_ORIGIN = "http://localhost:5173"
+SESSION_TTL_DAYS = "30"
+SESSION_COOKIE_SAMESITE = "Lax"
+COOKIE_SECURE = "false"
+VAPID_SUBJECT = "mailto:hello@example.com"
+
+[triggers]
+crons = ["* * * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "word_of_the_day"
+database_id = "64dfba7a-5c38-4dcb-b111-ebe6f89f4d33"
+migrations_dir = "migrations"
+
+[[kv_namespaces]]
+binding = "KV"
+id = "09c68a2322be4cab9ef0dc751895ab7f"
+
+[[queues.producers]]
+queue = "notifications"
+binding = "NOTIFICATION_QUEUE"
+
+[[queues.consumers]]
+queue = "notifications"
+max_batch_size = 10
+max_batch_timeout = 5

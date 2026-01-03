@@ -1,0 +1,12 @@
+SESSION_SECRET=replace-with-strong-secret
+VAPID_PUBLIC_KEY=replace-with-public-key
+VAPID_PRIVATE_KEY=replace-with-private-key
+VAPID_SUBJECT=mailto:hello@example.com
+GOOGLE_CLIENT_ID=your-google-client-id
+RESEND_API_KEY=your-resend-api-key
+RESEND_FROM=Word of the Day <hello@example.com>
+TWILIO_ACCOUNT_SID=your-twilio-account-sid
+TWILIO_AUTH_TOKEN=your-twilio-auth-token
+TWILIO_FROM=+15555555555
+ADMIN_USERNAME=admin@example.com
+ADMIN_PASSWORD=replace-with-strong-password

@@ -1,0 +1,32 @@
+{
+  "name": "@word-of-the-day/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "eslint src --max-warnings=0",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@word-of-the-day/shared": "file:../../packages/shared",
+    "idb": "^8.0.0",
+    "preact": "^10.22.1",
+    "preact-router": "^4.1.2"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.46.0",
+    "@preact/preset-vite": "^2.9.1",
+    "@tailwindcss/vite": "^4.1.18",
+    "@types/node": "^20.14.10",
+    "@types/serviceworker": "^0.0.120",
+    "tailwindcss": "^4.1.18",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.0",
+    "vitest": "^2.0.5"
+  }
+}

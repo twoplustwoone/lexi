@@ -1,0 +1,34 @@
+@import 'tailwindcss';
+@source "../index.html";
+@source "./**/*.{ts,tsx}";
+
+@theme {
+  --font-sans: 'Sora', system-ui, sans-serif;
+  --font-display: 'Fraunces', serif;
+  --color-ink: #1e1b16;
+  --color-muted: #6f6457;
+  --color-accent: #2f5d50;
+  --color-accent-strong: #1b4332;
+  --color-card: #fffaf2;
+  --color-banner: #efe1cd;
+  --color-sand: #f7f0e6;
+  --color-sand-accent: #f1dfcc;
+}
+
+@layer base {
+  body {
+    color-scheme: light;
+    @apply m-0 min-h-screen bg-sand font-sans text-ink leading-relaxed;
+  }
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

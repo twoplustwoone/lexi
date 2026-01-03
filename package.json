@@ -1,0 +1,32 @@
+{
+  "name": "word-of-the-day",
+  "private": true,
+  "packageManager": "npm@10.8.2",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "npm run build --prefix apps/api && npm run build --prefix apps/web",
+    "lint": "npm run lint --prefix packages/shared && npm run lint --prefix apps/api && npm run lint --prefix apps/web",
+    "typecheck": "npm run typecheck --prefix packages/shared && npm run typecheck --prefix apps/api && npm run typecheck --prefix apps/web",
+    "test": "npm run test --prefix packages/shared && npm run test --prefix apps/api && npm run test --prefix apps/web",
+    "install:all": "npm install && npm install --prefix packages/shared && npm install --prefix apps/api && npm install --prefix apps/web",
+    "format": "prettier --write .",
+    "seed:words": "node scripts/seed-words.mjs",
+    "seed:admin": "node scripts/seed-admin.mjs",
+    "generate:vapid": "node scripts/generate-vapid.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "@typescript-eslint/eslint-plugin": "^8.51.0",
+    "@typescript-eslint/parser": "^8.51.0",
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-import": "^2.29.1",
+    "eslint-plugin-prettier": "^5.2.1",
+    "prettier": "^3.3.3",
+    "typescript": "^5.5.4"
+  }
+}
