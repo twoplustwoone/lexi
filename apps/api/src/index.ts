@@ -9,7 +9,6 @@ import {
   eventSchema,
   normalizePreferences,
   passwordSchema,
-  phoneSchema,
   pushSubscriptionSchema,
   timeZoneSchema,
   uuidSchema,
@@ -28,8 +27,7 @@ import {
   getSessionUserId,
   parseCookies,
 } from './auth/sessions';
-import { sendSmsCode } from './auth/sms';
-import { Env, NotificationJob } from './env';
+import { Env } from './env';
 import {
   createAnonymousUser,
   getNotificationSchedule,
@@ -38,7 +36,6 @@ import {
   updateUserTimezone,
   upsertNotificationSchedule,
 } from './db';
-import { processNotificationQueue } from './notifications/consumer';
 import { sendWebPushNotification } from './notifications/push';
 import { processDueSchedules } from './notifications/scheduler';
 import { hashCode, hashPassword, verifyPassword } from './utils/crypto';
@@ -551,105 +548,6 @@ app.post('/api/auth/email/code/verify', async (c) => {
   return c.json({ ok: true, user_id: userId });
 });
 
-app.post('/api/auth/phone/code/request', async (c) => {
-  const body = await c.req.json();
-  const parsed = z.object({ phone: phoneSchema }).parse(body);
-  const code = generateNumericCode();
-  const { hash, salt } = createCodeHash(code);
-  await c.env.DB.prepare(
-    'INSERT INTO auth_codes (id, target, code_hash, salt, purpose, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-  )
-    .bind(
-      crypto.randomUUID(),
-      parsed.phone,
-      hash,
-      salt,
-      'phone_code',
-      buildExpiry(10),
-      DateTime.utc().toISO()
-    )
-    .run();
-
-  await sendSmsCode(c.env, parsed.phone, code);
-
-  return c.json({ ok: true });
-});
-
-app.post('/api/auth/phone/code/verify', async (c) => {
-  const body = await c.req.json();
-  const parsed = z.object({ phone: phoneSchema, code: z.string().min(4) }).parse(body);
-  const record = await c.env.DB.prepare(
-    `SELECT * FROM auth_codes WHERE target = ? AND purpose = 'phone_code' AND consumed_at IS NULL
-     ORDER BY created_at DESC LIMIT 1`
-  )
-    .bind(parsed.phone)
-    .first();
-  if (!record) {
-    return c.json({ error: 'Code not found' }, 404);
-  }
-  if ((record.expires_at as string) <= DateTime.utc().toISO()) {
-    return c.json({ error: 'Code expired' }, 410);
-  }
-  const expectedHash = hashCode(parsed.code, record.salt as string);
-  if (expectedHash !== record.code_hash) {
-    return c.json({ error: 'Invalid code' }, 401);
-  }
-
-  await c.env.DB.prepare('UPDATE auth_codes SET consumed_at = ? WHERE id = ?')
-    .bind(DateTime.utc().toISO(), record.id)
-    .run();
-
-  let userId: string | null = null;
-  let createdAccount = false;
-  const existingPhone = await c.env.DB.prepare('SELECT user_id FROM auth_phone WHERE phone = ?')
-    .bind(parsed.phone)
-    .first();
-  if (existingPhone) {
-    userId = existingPhone.user_id as string;
-  } else {
-    const anonId = c.req.header('x-anon-id');
-    if (anonId) {
-      userId = anonId;
-      const timezone = c.req.header('x-timezone') ?? 'UTC';
-      await ensureAnonymousRecord(c.env, userId, timezone);
-      await c.env.DB.prepare('UPDATE users SET is_anonymous = 0 WHERE id = ?').bind(userId).run();
-      createdAccount = true;
-    } else {
-      const timezone = c.req.header('x-timezone') ?? 'UTC';
-      timeZoneSchema.parse(timezone);
-      userId = crypto.randomUUID();
-      await createAnonymousUser(c.env, userId, timezone, DEFAULT_PREFERENCES);
-      await ensureDefaultSchedule(c.env, userId, timezone);
-      await c.env.DB.prepare('UPDATE users SET is_anonymous = 0 WHERE id = ?').bind(userId).run();
-      createdAccount = true;
-    }
-    await c.env.DB.prepare('INSERT INTO auth_phone (user_id, phone, created_at) VALUES (?, ?, ?)')
-      .bind(userId, parsed.phone, DateTime.utc().toISO())
-      .run();
-  }
-
-  const anonId = c.req.header('x-anon-id');
-  if (anonId && anonId !== userId) {
-    await mergeAnonymousIntoUser(c.env, anonId, userId);
-  }
-
-  const session = await createSession(c.env, userId);
-  c.header('Set-Cookie', buildSessionCookie(c.env, session.token));
-
-  if (createdAccount) {
-    await recordEvent(
-      c.env,
-      buildServerEvent({ name: 'account_created', userId, metadata: { method: 'phone_code' } })
-    );
-  }
-  await recordEvent(
-    c.env,
-    buildServerEvent({ name: 'auth_method_used', userId, metadata: { method: 'phone_code' } })
-  );
-
-  return c.json({ ok: true, user_id: userId });
-});
-
 app.post('/api/auth/google', async (c) => {
   const body = await c.req.json();
   const parsed = z.object({ id_token: z.string().min(10) }).parse(body);
@@ -754,41 +652,33 @@ app.post('/api/admin/notify', async (c) => {
     return c.json({ error: 'No push subscription available' }, 400);
   }
 
-  const result = await ensureDailyWordForUser(c.env, {
+  // Ensure a daily word is ready for the user (side effect only)
+  await ensureDailyWordForUser(c.env, {
     userId,
     timezone: user.timezone,
   });
 
-  if (c.env.APP_ENV === 'development') {
-    const statuses: number[] = [];
-    for (const sub of subscriptions.results as Array<{ endpoint: string }>) {
-      try {
-        const response = await sendWebPushNotification({
-          endpoint: sub.endpoint,
-          publicKey: c.env.VAPID_PUBLIC_KEY,
-          privateKey: c.env.VAPID_PRIVATE_KEY,
-          subject: c.env.VAPID_SUBJECT,
-        });
-        statuses.push(response.status);
-        if (response.status === 404 || response.status === 410) {
-          await c.env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?')
-            .bind(sub.endpoint)
-            .run();
-        }
-      } catch {
-        statuses.push(0);
+  // Send push notifications directly (no queue)
+  const statuses: number[] = [];
+  for (const sub of subscriptions.results as Array<{ endpoint: string }>) {
+    try {
+      const response = await sendWebPushNotification({
+        endpoint: sub.endpoint,
+        publicKey: c.env.VAPID_PUBLIC_KEY,
+        privateKey: c.env.VAPID_PRIVATE_KEY,
+        subject: c.env.VAPID_SUBJECT,
+      });
+      statuses.push(response.status);
+      if (response.status === 404 || response.status === 410) {
+        await c.env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?')
+          .bind(sub.endpoint)
+          .run();
       }
+    } catch {
+      statuses.push(0);
     }
-    return c.json({ ok: true, mode: 'direct', statuses });
   }
-
-  await c.env.NOTIFICATION_QUEUE.send({
-    userId,
-    wordId: result.word.id,
-    dateKey: result.dateKey,
-  });
-
-  return c.json({ ok: true });
+  return c.json({ ok: true, statuses });
 });
 
 app.get('/api/word/:id', async (c) => {
@@ -811,9 +701,6 @@ export default {
   fetch: app.fetch,
   scheduled: async (_event: ScheduledEvent, env: Env, ctx: ExecutionContext) => {
     ctx.waitUntil(processDueSchedules(env));
-  },
-  queue: async (batch: MessageBatch<NotificationJob>, env: Env, ctx: ExecutionContext) => {
-    ctx.waitUntil(processNotificationQueue(env, batch));
   },
 };
 
