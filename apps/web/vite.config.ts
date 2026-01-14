@@ -1,4 +1,5 @@
 import { defineConfig } from 'vite';
+import { configDefaults } from 'vitest/config';
 import preact from '@preact/preset-vite';
 import tailwindcss from '@tailwindcss/vite';
 
@@ -14,6 +15,6 @@ export default defineConfig({
     },
   },
   test: {
-    exclude: ['tests/**'],
+    exclude: [...configDefaults.exclude, 'tests/**'],
   },
 });
