@@ -209,17 +209,6 @@ export async function verifyEmailCode(email: string, code: string): Promise<void
   });
 }
 
-export async function requestPhoneCode(phone: string): Promise<void> {
-  await apiFetch('/auth/phone/code/request', { method: 'POST', body: JSON.stringify({ phone }) });
-}
-
-export async function verifyPhoneCode(phone: string, code: string): Promise<void> {
-  await apiFetch('/auth/phone/code/verify', {
-    method: 'POST',
-    body: JSON.stringify({ phone, code }),
-  });
-}
-
 export async function loginWithGoogle(idToken: string): Promise<void> {
   await apiFetch('/auth/google', { method: 'POST', body: JSON.stringify({ id_token: idToken }) });
 }

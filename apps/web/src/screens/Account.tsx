@@ -7,12 +7,10 @@ import {
   loginWithGoogle,
   logout,
   requestEmailCode,
-  requestPhoneCode,
   sendAdminTestNotification,
   signUpEmailPassword,
   trackEvent,
   verifyEmailCode,
-  verifyPhoneCode,
 } from '../api';
 import { getAnonymousId } from '../identity';
 
@@ -38,8 +36,6 @@ export function Account({ user, onUserChange }: AccountProps) {
   const [password, setPassword] = useState('');
   const [identifier, setIdentifier] = useState('');
   const [emailCode, setEmailCode] = useState('');
-  const [phone, setPhone] = useState('');
-  const [phoneCode, setPhoneCode] = useState('');
   const googleButtonRef = useRef<HTMLDivElement | null>(null);
 
   const getErrorMessage = (error: unknown, fallback: string) =>
@@ -212,43 +208,6 @@ export function Account({ user, onUserChange }: AccountProps) {
     }
   };
 
-  const handlePhoneCodeRequest = async (event: Event) => {
-    event.preventDefault();
-    setStatus(null);
-    try {
-      await requestPhoneCode(phone);
-      setStatus('Code sent via SMS.');
-    } catch (error: unknown) {
-      setStatus(getErrorMessage(error, 'Could not send SMS code.'));
-    }
-  };
-
-  const handlePhoneCodeVerify = async (event: Event) => {
-    event.preventDefault();
-    setStatus(null);
-    try {
-      await trackEvent({
-        event_name: 'auth_flow_started',
-        timestamp: new Date().toISOString(),
-        user_id: user.userId || getAnonymousId(),
-        client: getClientType(),
-        metadata: { method: 'phone_code' },
-      });
-      await verifyPhoneCode(phone, phoneCode);
-      const me = await refreshUser();
-      await trackEvent({
-        event_name: 'auth_flow_completed',
-        timestamp: new Date().toISOString(),
-        user_id: user.userId || getAnonymousId(),
-        client: getClientType(),
-        metadata: { method: 'phone_code' },
-      });
-      reportAuthResult(me, 'Signed in with phone code.');
-    } catch (error: unknown) {
-      setStatus(getErrorMessage(error, 'Invalid code.'));
-    }
-  };
-
   const handleLogout = async () => {
     await logout();
     await refreshUser();
@@ -391,40 +350,6 @@ export function Account({ user, onUserChange }: AccountProps) {
               className="mt-4 inline-flex items-center justify-center rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-strong focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
               type="button"
               onClick={handleEmailCodeVerify}
-            >
-              Verify code
-            </button>
-          </form>
-
-          <form className={`${cardBase} p-6`} onSubmit={handlePhoneCodeRequest}>
-            <h3 className="text-lg font-semibold">Phone + SMS Code</h3>
-            <label className="mt-4 flex flex-col gap-1 text-sm">
-              <span className="font-semibold">Phone (E.164)</span>
-              <input
-                className={inputClass}
-                value={phone}
-                autoComplete="tel"
-                onChange={(e) => setPhone(e.currentTarget.value)}
-              />
-            </label>
-            <button
-              className="mt-3 inline-flex items-center justify-center rounded-xl bg-accent/10 px-4 py-2 text-sm font-semibold text-accent-strong transition hover:bg-accent/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
-              type="submit"
-            >
-              Send SMS
-            </button>
-            <label className="mt-4 flex flex-col gap-1 text-sm">
-              <span className="font-semibold">Code</span>
-              <input
-                className={inputClass}
-                value={phoneCode}
-                onChange={(e) => setPhoneCode(e.currentTarget.value)}
-              />
-            </label>
-            <button
-              className="mt-4 inline-flex items-center justify-center rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-strong focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
-              type="button"
-              onClick={handlePhoneCodeVerify}
             >
               Verify code
             </button>
