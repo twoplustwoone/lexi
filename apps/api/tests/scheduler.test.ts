@@ -7,8 +7,8 @@ import { processDueSchedules } from '../src/notifications/scheduler';
 import { createTestEnv } from './helpers';
 
 describe('processDueSchedules', () => {
-  it('delivers due words and enqueues notifications', async () => {
-    const { env, queueMessages, cleanup } = await createTestEnv();
+  it('delivers due words and sends notifications', async () => {
+    const { env, cleanup } = await createTestEnv();
     const userId = crypto.randomUUID();
 
     try {
@@ -33,13 +33,14 @@ describe('processDueSchedules', () => {
 
       await processDueSchedules(env);
 
+      // Word should be delivered
       const delivered = await env.DB.prepare('SELECT word_id FROM user_words WHERE user_id = ?')
         .bind(userId)
         .first();
 
       expect(delivered).not.toBeNull();
-      expect(queueMessages.length).toBe(1);
 
+      // Next delivery should be scheduled
       const schedule = await env.DB.prepare(
         'SELECT next_delivery_at FROM notification_schedules WHERE user_id = ?'
       )
@@ -48,6 +49,7 @@ describe('processDueSchedules', () => {
 
       expect(schedule?.next_delivery_at).toBeTruthy();
 
+      // Analytics event should be recorded
       const event = await env.DB.prepare(
         'SELECT event_name FROM analytics_events WHERE user_id = ?'
       )

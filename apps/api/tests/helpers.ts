@@ -4,11 +4,10 @@ import { fileURLToPath } from 'node:url';
 
 import { Miniflare } from 'miniflare';
 
-import { Env, NotificationJob } from '../src/env';
+import { Env } from '../src/env';
 
 export async function createTestEnv(): Promise<{
   env: Env;
-  queueMessages: NotificationJob[];
   cleanup: () => Promise<void>;
 }> {
   const mf = new Miniflare({
@@ -25,15 +24,9 @@ export async function createTestEnv(): Promise<{
 
   await applyMigrations(db);
 
-  const queueMessages: NotificationJob[] = [];
   const env: Env = {
     DB: db,
     KV: kv,
-    NOTIFICATION_QUEUE: {
-      async send(message: NotificationJob) {
-        queueMessages.push(message);
-      },
-    } as any,
     APP_ENV: 'test',
     CORS_ALLOW_ORIGIN: 'http://localhost',
     SESSION_TTL_DAYS: '30',
@@ -46,14 +39,10 @@ export async function createTestEnv(): Promise<{
     GOOGLE_CLIENT_ID: 'test',
     RESEND_API_KEY: 'test',
     RESEND_FROM: 'test@example.com',
-    TWILIO_ACCOUNT_SID: 'test',
-    TWILIO_AUTH_TOKEN: 'test',
-    TWILIO_FROM: '+15555555555',
   };
 
   return {
     env,
-    queueMessages,
     cleanup: async () => {
       await mf.dispose();
     },
