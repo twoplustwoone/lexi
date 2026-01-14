@@ -12,6 +12,7 @@ import {
   verifyEmailCode,
   type AuthMethodsResponse,
 } from '../api';
+import { Button } from './Button';
 import { getAnonymousId } from '../identity';
 
 interface AuthSheetProps {
@@ -48,6 +49,8 @@ export function AuthSheet({ open, onClose, user, onUserChange }: AuthSheetProps)
   const userIdRef = useRef<string | null>(user.userId);
 
   const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+  const hasGoogleClientId =
+    typeof clientId === 'string' && clientId.includes('.apps.googleusercontent.com');
 
   const getErrorMessage = (error: unknown, fallback: string) =>
     error instanceof Error ? error.message : fallback;
@@ -112,7 +115,7 @@ export function AuthSheet({ open, onClose, user, onUserChange }: AuthSheetProps)
   }, [open, onClose]);
 
   useEffect(() => {
-    if (!open || !clientId || !googleButtonRef.current) {
+    if (!open || !hasGoogleClientId || !googleButtonRef.current) {
       return;
     }
 
@@ -181,7 +184,7 @@ export function AuthSheet({ open, onClose, user, onUserChange }: AuthSheetProps)
     return () => {
       script?.removeEventListener('load', onLoad);
     };
-  }, [open, clientId, stage]);
+  }, [open, hasGoogleClientId, stage, clientId]);
 
   if (!open) {
     return null;
@@ -320,14 +323,16 @@ export function AuthSheet({ open, onClose, user, onUserChange }: AuthSheetProps)
               Keep your history, schedule, and preferences synced across devices.
             </p>
           </div>
-          <button
-            type="button"
-            className="rounded-full border border-[rgba(30,27,22,0.12)] px-3 py-1 text-sm text-muted transition hover:text-ink"
+          <Button
+            variant="outline"
+            size="sm"
+            radius="full"
+            className="font-normal"
             onClick={onClose}
             aria-label="Close sign in"
           >
             Close
-          </button>
+          </Button>
         </div>
 
         {status ? <p className="mt-4 text-sm text-accent-strong">{status}</p> : null}
@@ -336,10 +341,13 @@ export function AuthSheet({ open, onClose, user, onUserChange }: AuthSheetProps)
           <div className="mt-6 grid gap-5">
             <div className="rounded-2xl border border-dashed border-[rgba(30,27,22,0.2)] bg-white/60 px-4 py-4">
               <p className="text-sm text-muted">Fastest option</p>
-              {clientId ? (
+              {hasGoogleClientId ? (
                 <div className="mt-3 flex justify-center" ref={googleButtonRef} />
               ) : (
-                <p className="mt-3 text-sm text-muted">Google sign-in requires a client ID.</p>
+                <p className="mt-3 text-sm text-muted">
+                  Google sign-in needs a valid client ID ending in{' '}
+                  <span className="font-semibold">.apps.googleusercontent.com</span>.
+                </p>
               )}
             </div>
 
@@ -361,22 +369,20 @@ export function AuthSheet({ open, onClose, user, onUserChange }: AuthSheetProps)
                   required
                 />
               </label>
-              <button
-                className="inline-flex items-center justify-center rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-strong focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
-                type="submit"
-                disabled={isFetching || !email.trim()}
-              >
+              <Button type="submit" disabled={isFetching || !email.trim()}>
                 {isFetching ? 'Checking...' : 'Continue'}
-              </button>
+              </Button>
             </form>
           </div>
         ) : (
           <div className="mt-6 grid gap-5">
             <div className="flex items-center justify-between rounded-xl border border-[rgba(30,27,22,0.12)] bg-white/70 px-3 py-2 text-sm">
               <span className="font-semibold text-ink">{email}</span>
-              <button
-                type="button"
-                className="text-xs font-semibold uppercase tracking-[0.12em] text-accent-strong"
+              <Button
+                variant="link"
+                size="link"
+                radius="none"
+                className="text-xs uppercase tracking-[0.12em]"
                 onClick={() => {
                   setStage('email');
                   setMethods(null);
@@ -387,7 +393,7 @@ export function AuthSheet({ open, onClose, user, onUserChange }: AuthSheetProps)
                 }}
               >
                 Change
-              </button>
+              </Button>
             </div>
 
             {stage === 'password' ? (
@@ -403,20 +409,17 @@ export function AuthSheet({ open, onClose, user, onUserChange }: AuthSheetProps)
                     required
                   />
                 </label>
-                <button
-                  className="inline-flex items-center justify-center rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-strong focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
-                  type="submit"
-                  disabled={isSubmitting}
-                >
+                <Button type="submit" disabled={isSubmitting}>
                   {isSubmitting ? 'Working...' : actionLabel}
-                </button>
+                </Button>
                 <div className="flex flex-wrap items-center gap-3 text-sm text-muted">
                   <span>
                     {hasAccount ? 'Prefer a code instead?' : 'Prefer not to set a password?'}
                   </span>
-                  <button
-                    type="button"
-                    className="font-semibold text-accent-strong"
+                  <Button
+                    variant="link"
+                    size="link"
+                    radius="none"
                     onClick={() => {
                       setStage('code');
                       setStatus(null);
@@ -425,20 +428,15 @@ export function AuthSheet({ open, onClose, user, onUserChange }: AuthSheetProps)
                     }}
                   >
                     Use email code
-                  </button>
+                  </Button>
                 </div>
               </form>
             ) : (
               <form className="grid gap-4" onSubmit={handleCodeVerify}>
                 {!codeSent ? (
-                  <button
-                    className="inline-flex items-center justify-center rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-strong focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
-                    type="button"
-                    onClick={handleCodeRequest}
-                    disabled={isSubmitting}
-                  >
+                  <Button type="button" onClick={handleCodeRequest} disabled={isSubmitting}>
                     {isSubmitting ? 'Sending...' : 'Send code'}
-                  </button>
+                  </Button>
                 ) : (
                   <>
                     <label className="flex flex-col gap-1 text-sm">
@@ -451,30 +449,29 @@ export function AuthSheet({ open, onClose, user, onUserChange }: AuthSheetProps)
                         required
                       />
                     </label>
-                    <button
-                      className="inline-flex items-center justify-center rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-strong focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
-                      type="submit"
-                      disabled={isSubmitting || !emailCode.trim()}
-                    >
+                    <Button type="submit" disabled={isSubmitting || !emailCode.trim()}>
                       {isSubmitting ? 'Verifying...' : 'Verify code'}
-                    </button>
-                    <button
-                      className="text-left text-sm font-semibold text-accent-strong"
-                      type="button"
+                    </Button>
+                    <Button
+                      variant="link"
+                      size="link"
+                      radius="none"
+                      className="text-left"
                       onClick={handleCodeRequest}
                       disabled={isSubmitting}
                     >
                       Resend code
-                    </button>
+                    </Button>
                   </>
                 )}
 
                 {showPasswordOption ? (
                   <div className="flex flex-wrap items-center gap-3 text-sm text-muted">
                     <span>Want to use a password instead?</span>
-                    <button
-                      type="button"
-                      className="font-semibold text-accent-strong"
+                    <Button
+                      variant="link"
+                      size="link"
+                      radius="none"
                       onClick={() => {
                         setStage('password');
                         setStatus(null);
@@ -482,13 +479,13 @@ export function AuthSheet({ open, onClose, user, onUserChange }: AuthSheetProps)
                       }}
                     >
                       Use password
-                    </button>
+                    </Button>
                   </div>
                 ) : null}
               </form>
             )}
 
-            {clientId ? (
+            {hasGoogleClientId ? (
               <div className="rounded-2xl border border-dashed border-[rgba(30,27,22,0.2)] bg-white/60 px-4 py-4">
                 <p className="text-sm text-muted">
                   {methods?.methods.google

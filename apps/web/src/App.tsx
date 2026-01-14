@@ -5,6 +5,7 @@ import { Link } from 'preact-router/match';
 import { fetchMe, getClientType, registerAnonymousIdentity, trackEvent } from './api';
 import { getAnonymousId } from './identity';
 import { AuthSheet } from './components/AuthSheet';
+import { Button } from './components/Button';
 import { Home } from './screens/Home';
 import { History } from './screens/History';
 import { Settings } from './screens/Settings';
@@ -109,13 +110,13 @@ export function App() {
             </Link>
           </nav>
           {!user.isAuthenticated ? (
-            <button
-              className="inline-flex items-center justify-center rounded-full bg-accent px-4 py-2 text-sm font-semibold text-white shadow-[0_8px_18px_rgba(29,25,18,0.12)] transition hover:bg-accent-strong focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
-              type="button"
+            <Button
+              radius="full"
+              className="shadow-[0_8px_18px_rgba(29,25,18,0.12)]"
               onClick={openAuth}
             >
               Sign in
-            </button>
+            </Button>
           ) : null}
         </div>
       </header>

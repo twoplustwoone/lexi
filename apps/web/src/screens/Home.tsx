@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
 
 import { fetchTodayWord, markWordViewed, syncHistoryCache, syncSettingsCache } from '../api';
+import { Button } from '../components/Button';
 import { getHistory } from '../storage';
 
 interface HomeProps {
@@ -127,15 +128,7 @@ export function Home({ user, onOpenAuth }: HomeProps) {
             ? 'Your history and preferences are synced across devices.'
             : 'Your progress is saved locally and can be upgraded to an account anytime.'}
         </p>
-        {!user.isAuthenticated ? (
-          <button
-            className="inline-flex items-center justify-center rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-strong focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
-            type="button"
-            onClick={onOpenAuth}
-          >
-            Sign in to sync
-          </button>
-        ) : null}
+        {!user.isAuthenticated ? <Button onClick={onOpenAuth}>Sign in to sync</Button> : null}
       </div>
     </section>
   );

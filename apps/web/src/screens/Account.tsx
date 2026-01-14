@@ -1,6 +1,7 @@
 import { useState } from 'preact/hooks';
 
 import { fetchMe, logout, sendAdminTestNotification } from '../api';
+import { Button } from '../components/Button';
 import { getAnonymousId } from '../identity';
 
 interface AccountProps {
@@ -66,31 +67,19 @@ export function Account({ user, onOpenAuth, onUserChange }: AccountProps) {
             : `Anonymous session: ${getAnonymousId()}`}
         </p>
         {user.isAuthenticated ? (
-          <button
-            className="mt-3 inline-flex items-center justify-center rounded-xl bg-accent/10 px-4 py-2 text-sm font-semibold text-accent-strong transition hover:bg-accent/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
-            type="button"
-            onClick={handleLogout}
-          >
+          <Button className="mt-3" variant="secondary" onClick={handleLogout}>
             Sign out
-          </button>
+          </Button>
         ) : null}
         {!user.isAuthenticated ? (
-          <button
-            className="mt-3 inline-flex items-center justify-center rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-strong focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
-            type="button"
-            onClick={onOpenAuth}
-          >
+          <Button className="mt-3" onClick={onOpenAuth}>
             Sign in or create account
-          </button>
+          </Button>
         ) : null}
         {user.isAuthenticated && user.isAdmin ? (
-          <button
-            className="mt-3 inline-flex items-center justify-center rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-strong focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
-            type="button"
-            onClick={handleAdminNotify}
-          >
+          <Button className="mt-3" onClick={handleAdminNotify}>
             Send test notification
-          </button>
+          </Button>
         ) : null}
         {status ? <p className="mt-3 text-sm text-accent-strong">{status}</p> : null}
       </div>
@@ -102,13 +91,9 @@ export function Account({ user, onOpenAuth, onUserChange }: AccountProps) {
             Sign in to keep your word history, notification settings, and preferences safe across
             devices.
           </p>
-          <button
-            className="mt-4 inline-flex items-center justify-center rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-strong focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
-            type="button"
-            onClick={onOpenAuth}
-          >
+          <Button className="mt-4" onClick={onOpenAuth}>
             Open sign-in
-          </button>
+          </Button>
         </div>
       ) : null}
     </section>

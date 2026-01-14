@@ -9,6 +9,7 @@ import {
   updateSettingsRemote,
   subscribePush,
 } from '../api';
+import { Button } from '../components/Button';
 import { getAnonymousId, getTimeZone } from '../identity';
 
 interface SettingsProps {
@@ -149,7 +150,7 @@ export function Settings({ user }: SettingsProps) {
       <form className={`${cardBase} p-6`} onSubmit={handleSave}>
         <h2 className="font-[var(--font-display)] text-2xl">Notifications</h2>
         <div className="mt-4 flex items-center gap-4">
-          <label className="relative inline-flex h-7 w-12 cursor-pointer items-center focus-within:outline focus-within:outline-2 focus-within:outline-accent focus-within:outline-offset-2">
+          <label className="relative inline-flex h-7 w-12 cursor-pointer items-center focus-within:outline-2 focus-within:outline-accent focus-within:outline-offset-2">
             <input
               type="checkbox"
               checked={enabled}
@@ -169,7 +170,7 @@ export function Settings({ user }: SettingsProps) {
           <span className="font-semibold">Delivery time</span>
           <input
             type="time"
-            className="rounded-xl border border-[rgba(30,27,22,0.12)] bg-white px-3 py-2 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+            className="rounded-xl border border-[rgba(30,27,22,0.12)] bg-white px-3 py-2 text-sm focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
             value={deliveryTime}
             onChange={(event) => setDeliveryTime(event.currentTarget.value)}
           />
@@ -186,12 +187,9 @@ export function Settings({ user }: SettingsProps) {
         </label>
 
         {message ? <p className="mt-3 text-sm text-accent-strong">{message}</p> : null}
-        <button
-          className="mt-4 inline-flex items-center justify-center rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-strong focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
-          type="submit"
-        >
+        <Button className="mt-4" type="submit">
           Save settings
-        </button>
+        </Button>
       </form>
 
       <div className={`${cardBase} p-6`}>
