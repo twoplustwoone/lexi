@@ -4,6 +4,7 @@ import { Link } from 'preact-router/match';
 
 import { fetchMe, getClientType, registerAnonymousIdentity, trackEvent } from './api';
 import { getAnonymousId } from './identity';
+import { AuthSheet } from './components/AuthSheet';
 import { Home } from './screens/Home';
 import { History } from './screens/History';
 import { Settings } from './screens/Settings';
@@ -24,6 +25,10 @@ export function App() {
     isAdmin: false,
   });
   const [ready, setReady] = useState(false);
+  const [authOpen, setAuthOpen] = useState(false);
+
+  const openAuth = () => setAuthOpen(true);
+  const closeAuth = () => setAuthOpen(false);
 
   useEffect(() => {
     const init = async () => {
@@ -72,36 +77,47 @@ export function App() {
             <p className="mt-1 text-sm text-muted">Daily rituals, kept simple.</p>
           </div>
         </div>
-        <nav className="flex flex-wrap gap-4 rounded-full bg-white/70 px-4 py-2 shadow-[0_8px_18px_rgba(29,25,18,0.08)]">
-          <Link
-            activeClassName="text-accent-strong"
-            className="text-muted font-semibold no-underline transition-colors hover:text-accent-strong"
-            href="/"
-          >
-            Home
-          </Link>
-          <Link
-            activeClassName="text-accent-strong"
-            className="text-muted font-semibold no-underline transition-colors hover:text-accent-strong"
-            href="/history"
-          >
-            History
-          </Link>
-          <Link
-            activeClassName="text-accent-strong"
-            className="text-muted font-semibold no-underline transition-colors hover:text-accent-strong"
-            href="/settings"
-          >
-            Settings
-          </Link>
-          <Link
-            activeClassName="text-accent-strong"
-            className="text-muted font-semibold no-underline transition-colors hover:text-accent-strong"
-            href="/account"
-          >
-            Account
-          </Link>
-        </nav>
+        <div className="flex flex-wrap items-center gap-3">
+          <nav className="flex flex-wrap gap-4 rounded-full bg-white/70 px-4 py-2 shadow-[0_8px_18px_rgba(29,25,18,0.08)]">
+            <Link
+              activeClassName="text-accent-strong"
+              className="text-muted font-semibold no-underline transition-colors hover:text-accent-strong"
+              href="/"
+            >
+              Home
+            </Link>
+            <Link
+              activeClassName="text-accent-strong"
+              className="text-muted font-semibold no-underline transition-colors hover:text-accent-strong"
+              href="/history"
+            >
+              History
+            </Link>
+            <Link
+              activeClassName="text-accent-strong"
+              className="text-muted font-semibold no-underline transition-colors hover:text-accent-strong"
+              href="/settings"
+            >
+              Settings
+            </Link>
+            <Link
+              activeClassName="text-accent-strong"
+              className="text-muted font-semibold no-underline transition-colors hover:text-accent-strong"
+              href="/account"
+            >
+              Account
+            </Link>
+          </nav>
+          {!user.isAuthenticated ? (
+            <button
+              className="inline-flex items-center justify-center rounded-full bg-accent px-4 py-2 text-sm font-semibold text-white shadow-[0_8px_18px_rgba(29,25,18,0.12)] transition hover:bg-accent-strong focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+              type="button"
+              onClick={openAuth}
+            >
+              Sign in
+            </button>
+          ) : null}
+        </div>
       </header>
 
       <main className="flex-1">
@@ -111,13 +127,15 @@ export function App() {
           </div>
         ) : (
           <PreactRouter>
-            <Home path="/" />
+            <Home path="/" user={user} onOpenAuth={openAuth} />
             <History path="/history" user={user} />
             <Settings path="/settings" user={user} />
-            <Account path="/account" user={user} onUserChange={setUser} />
+            <Account path="/account" user={user} onOpenAuth={openAuth} onUserChange={setUser} />
           </PreactRouter>
         )}
       </main>
+
+      <AuthSheet open={authOpen} onClose={closeAuth} user={user} onUserChange={setUser} />
     </div>
   );
 }

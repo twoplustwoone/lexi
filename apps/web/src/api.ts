@@ -25,6 +25,15 @@ export interface WordPayload {
   };
 }
 
+export interface AuthMethodsResponse {
+  account_exists: boolean;
+  methods: {
+    password: boolean;
+    email_code: boolean;
+    google: boolean;
+  };
+}
+
 export async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers || {});
   headers.set('Content-Type', 'application/json');
@@ -195,6 +204,13 @@ export async function loginEmailPassword(identifier: string, password: string): 
   await apiFetch('/auth/login', {
     method: 'POST',
     body: JSON.stringify({ identifier, password }),
+  });
+}
+
+export async function getAuthMethods(email: string): Promise<AuthMethodsResponse> {
+  return apiFetch<AuthMethodsResponse>('/auth/methods', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
   });
 }
 

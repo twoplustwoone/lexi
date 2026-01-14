@@ -5,6 +5,8 @@ import { getHistory } from '../storage';
 
 interface HomeProps {
   path?: string;
+  user: { isAuthenticated: boolean };
+  onOpenAuth: () => void;
 }
 
 type WordDisplay = {
@@ -17,8 +19,7 @@ type WordDisplay = {
   date: string;
 };
 
-export function Home(props: HomeProps) {
-  void props;
+export function Home({ user, onOpenAuth }: HomeProps) {
   const [word, setWord] = useState<WordDisplay | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -118,10 +119,21 @@ export function Home(props: HomeProps) {
           </ul>
         </div>
       </article>
-      <div className={`${cardBase} p-5`}>
+      <div className={`${cardBase} flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between`}>
         <p className="text-muted">
-          Your progress is saved locally and can be upgraded to an account anytime.
+          {user.isAuthenticated
+            ? 'Your history and preferences are synced across devices.'
+            : 'Your progress is saved locally and can be upgraded to an account anytime.'}
         </p>
+        {!user.isAuthenticated ? (
+          <button
+            className="inline-flex items-center justify-center rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-strong focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+            type="button"
+            onClick={onOpenAuth}
+          >
+            Sign in to sync
+          </button>
+        ) : null}
       </div>
     </section>
   );
