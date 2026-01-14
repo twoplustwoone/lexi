@@ -55,7 +55,7 @@ export function History({ user }: HistoryProps) {
         <h2 className="font-[var(--font-display)] text-2xl">History</h2>
         <p className="mt-1 text-muted">Every word you have received, in order.</p>
       </div>
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-4">
+      <div className="grid auto-rows-min grid-cols-[repeat(auto-fit,minmax(220px,1fr))] items-start gap-4">
         {history.map((entry) => (
           <details className={`${cardBase} group p-0`} key={entry.word_id}>
             <summary className="relative flex cursor-pointer list-none flex-col gap-1 px-6 py-6 pr-12 focus-visible:rounded-[14px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-4 after:absolute after:right-6 after:top-6 after:text-xl after:text-muted after:content-['+'] group-open:after:content-['-']">
