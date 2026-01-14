@@ -32,7 +32,7 @@ id = "09c68a2322be4cab9ef0dc751895ab7f"
 
 [env.production.vars]
 APP_ENV = "production"
-CORS_ALLOW_ORIGIN = "https:lexi.twoplustwoone.dev"
+CORS_ALLOW_ORIGIN = "https://lexi.twoplustwoone.dev"
 SESSION_TTL_DAYS = "30"
 SESSION_COOKIE_SAMESITE = "Lax"
 COOKIE_SECURE = "true"
