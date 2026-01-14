@@ -1,6 +1,6 @@
 # Functional Specification
 
-## 1. Word of the Day
+## 1. Lexi Daily Word
 
 Each word includes:
 

@@ -1,6 +1,6 @@
-# Word of the Day PWA
+# Lexi PWA
 
-A privacy-respecting, installable Word-of-the-Day Progressive Web App (PWA) that delivers a daily word with definition, etymology, examples, and pronunciation via push notifications.
+A privacy-respecting, installable Lexi PWA that delivers a daily word with definition, etymology, examples, and pronunciation via push notifications.
 
 The app works without accounts by default, supports optional account creation later, and is designed to scale feature complexity over time without breaking existing users.
 
