@@ -62,9 +62,11 @@ export function App() {
     <div className="flex min-h-screen flex-col gap-6 bg-[radial-gradient(circle_at_top,_#fdf7ee_0%,_#f7f0e6_45%,_#f1dfcc_100%)] px-6 pb-16 pt-6 text-ink md:px-12">
       <header className="flex flex-wrap items-center justify-between gap-8">
         <div className="flex items-center gap-4">
-          <span className="rounded-[18px] bg-accent px-4 py-2 font-[var(--font-display)] text-[28px] font-semibold text-white shadow-[0_18px_40px_rgba(29,25,18,0.12)]">
-            L
-          </span>
+          <img
+            src="/icons/icon-192.png"
+            alt="Lexi"
+            className="h-14 w-14 rounded-[18px] shadow-[0_18px_40px_rgba(29,25,18,0.12)]"
+          />
           <div>
             <p className="m-0 font-[var(--font-display)] text-2xl">Lexi</p>
             <p className="mt-1 text-sm text-muted">Daily rituals, kept simple.</p>
