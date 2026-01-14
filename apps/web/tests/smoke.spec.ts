@@ -127,7 +127,7 @@ async function mockApi(page: Page, overrides: ApiOverrides = {}) {
 test("renders the home view with today's word", async ({ page }) => {
   await mockApi(page);
   await page.goto('/');
-  await expect(page.getByText('Word of the Day')).toBeVisible();
+  await expect(page.getByText('Lexi')).toBeVisible();
   await expect(page.getByText("Today's word")).toBeVisible();
   await expect(page.getByText(defaultWord.word)).toBeVisible();
   await expect(page.getByText(defaultWord.definition)).toBeVisible();

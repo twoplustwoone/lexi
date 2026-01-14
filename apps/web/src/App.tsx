@@ -63,10 +63,10 @@ export function App() {
       <header className="flex flex-wrap items-center justify-between gap-8">
         <div className="flex items-center gap-4">
           <span className="rounded-[18px] bg-accent px-4 py-2 font-[var(--font-display)] text-[28px] font-semibold text-white shadow-[0_18px_40px_rgba(29,25,18,0.12)]">
-            W
+            L
           </span>
           <div>
-            <p className="m-0 font-[var(--font-display)] text-2xl">Word of the Day</p>
+            <p className="m-0 font-[var(--font-display)] text-2xl">Lexi</p>
             <p className="mt-1 text-sm text-muted">Daily rituals, kept simple.</p>
           </div>
         </div>
