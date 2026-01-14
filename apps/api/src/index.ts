@@ -551,9 +551,7 @@ app.post('/api/auth/email/code/verify', async (c) => {
         userId = anonId;
         const timezone = c.req.header('x-timezone') ?? 'UTC';
         await ensureAnonymousRecord(c.env, userId, timezone);
-        await c.env.DB.prepare('UPDATE users SET is_anonymous = 0 WHERE id = ?')
-          .bind(userId)
-          .run();
+        await c.env.DB.prepare('UPDATE users SET is_anonymous = 0 WHERE id = ?').bind(userId).run();
         createdAccount = true;
       } else {
         const timezone = c.req.header('x-timezone') ?? 'UTC';
@@ -561,9 +559,7 @@ app.post('/api/auth/email/code/verify', async (c) => {
         userId = crypto.randomUUID();
         await createAnonymousUser(c.env, userId, timezone, DEFAULT_PREFERENCES);
         await ensureDefaultSchedule(c.env, userId, timezone);
-        await c.env.DB.prepare('UPDATE users SET is_anonymous = 0 WHERE id = ?')
-          .bind(userId)
-          .run();
+        await c.env.DB.prepare('UPDATE users SET is_anonymous = 0 WHERE id = ?').bind(userId).run();
         createdAccount = true;
       }
     }

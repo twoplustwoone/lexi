@@ -166,7 +166,7 @@ export function AuthSheet({ open, onClose, user, onUserChange }: AuthSheetProps)
       return;
     }
 
-    let script = document.querySelector('script[data-google-gsi]');
+    let script = document.querySelector('script[data-google-gsi]') as HTMLScriptElement | null;
     if (!script) {
       script = document.createElement('script');
       script.src = 'https://accounts.google.com/gsi/client';

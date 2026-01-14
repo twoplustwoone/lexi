@@ -119,7 +119,9 @@ export function Home({ user, onOpenAuth }: HomeProps) {
           </ul>
         </div>
       </article>
-      <div className={`${cardBase} flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between`}>
+      <div
+        className={`${cardBase} flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between`}
+      >
         <p className="text-muted">
           {user.isAuthenticated
             ? 'Your history and preferences are synced across devices.'

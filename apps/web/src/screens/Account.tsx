@@ -1,10 +1,6 @@
 import { useState } from 'preact/hooks';
 
-import {
-  fetchMe,
-  logout,
-  sendAdminTestNotification,
-} from '../api';
+import { fetchMe, logout, sendAdminTestNotification } from '../api';
 import { getAnonymousId } from '../identity';
 
 interface AccountProps {
