@@ -36,7 +36,7 @@ CORS_ALLOW_ORIGIN = "https://lexi.twoplustwoone.dev"
 SESSION_TTL_DAYS = "30"
 SESSION_COOKIE_SAMESITE = "Lax"
 COOKIE_SECURE = "true"
-VAPID_SUBJECT = "mailto:YOUR_EMAIL@yourdomain.com"
+VAPID_SUBJECT = "mailto:francisco@twoplustwoone.dev"
 
 [env.production.triggers]
 crons = ["*/15 * * * *"]
