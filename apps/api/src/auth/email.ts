@@ -10,8 +10,8 @@ export async function sendEmailCode(env: Env, email: string, code: string): Prom
     body: JSON.stringify({
       from: env.RESEND_FROM,
       to: [email],
-      subject: 'Your Word of the Day sign-in code',
-      text: `Your verification code is ${code}. It expires in 10 minutes.`,
+      subject: 'Your Lexi sign-in code',
+      text: `Your Lexi verification code is ${code}. It expires in 10 minutes.`,
     }),
   });
 
