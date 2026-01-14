@@ -56,6 +56,11 @@ const args = process.argv.slice(2);
 const isRemote = args.includes('--remote');
 const modeFlag = isRemote ? '--remote' : '--local';
 
+// Support --env flag for production deployments (e.g., --env production)
+const envIndex = args.indexOf('--env');
+const envValue = envIndex !== -1 && args[envIndex + 1] ? args[envIndex + 1] : null;
+const envFlag = envValue ? `--env ${envValue}` : '';
+
 const username = process.env.ADMIN_USERNAME;
 const password = process.env.ADMIN_PASSWORD;
 if (!username || !password) {
@@ -88,10 +93,10 @@ writeFileSync(tempPath, sql);
 const wrangler = getWranglerCommand();
 
 try {
-  execSync(`${wrangler} d1 migrations apply word_of_the_day ${modeFlag} --cwd apps/api`, {
+  execSync(`${wrangler} d1 migrations apply word_of_the_day ${modeFlag} ${envFlag} --cwd apps/api`, {
     stdio: 'inherit',
   });
-  execSync(`${wrangler} d1 execute word_of_the_day --file ${tempPath} ${modeFlag} --cwd apps/api`, {
+  execSync(`${wrangler} d1 execute word_of_the_day --file ${tempPath} ${modeFlag} ${envFlag} --cwd apps/api`, {
     stdio: 'inherit',
   });
 } finally {
