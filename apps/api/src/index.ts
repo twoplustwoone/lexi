@@ -340,6 +340,35 @@ app.post('/api/events', async (c) => {
   return c.json({ ok: true });
 });
 
+app.post('/api/auth/methods', async (c) => {
+  const body = await c.req.json();
+  const parsed = z.object({ email: emailSchema }).parse(body);
+
+  const passwordRecord = await c.env.DB.prepare(
+    'SELECT password_set FROM auth_email_password WHERE email = ?'
+  )
+    .bind(parsed.email)
+    .first();
+
+  const googleRecord = await c.env.DB.prepare(
+    'SELECT user_id FROM auth_oauth WHERE provider = ? AND email = ?'
+  )
+    .bind('google', parsed.email)
+    .first();
+
+  const passwordSet = passwordRecord ? Number(passwordRecord.password_set) === 1 : false;
+  const accountExists = Boolean(passwordRecord || googleRecord);
+
+  return c.json({
+    account_exists: accountExists,
+    methods: {
+      password: passwordSet,
+      email_code: true,
+      google: Boolean(googleRecord),
+    },
+  });
+});
+
 app.post('/api/auth/signup', async (c) => {
   const body = await c.req.json();
   const parsed = z.object({ email: emailSchema, password: passwordSchema }).parse(body);
@@ -347,6 +376,14 @@ app.post('/api/auth/signup', async (c) => {
     .bind(parsed.email)
     .first();
   if (existing) {
+    return c.json({ error: 'Email already in use' }, 409);
+  }
+  const oauthExisting = await c.env.DB.prepare(
+    'SELECT user_id FROM auth_oauth WHERE provider = ? AND email = ?'
+  )
+    .bind('google', parsed.email)
+    .first();
+  if (oauthExisting) {
     return c.json({ error: 'Email already in use' }, 409);
   }
 
@@ -366,9 +403,9 @@ app.post('/api/auth/signup', async (c) => {
   await c.env.DB.prepare('UPDATE users SET is_anonymous = 0 WHERE id = ?').bind(userId).run();
   const passwordHash = hashPassword(parsed.password);
   await c.env.DB.prepare(
-    'INSERT INTO auth_email_password (user_id, email, password_hash, created_at) VALUES (?, ?, ?, ?)'
+    'INSERT INTO auth_email_password (user_id, email, password_hash, password_set, created_at) VALUES (?, ?, ?, ?, ?)'
   )
-    .bind(userId, parsed.email, passwordHash, DateTime.utc().toISO())
+    .bind(userId, parsed.email, passwordHash, 1, DateTime.utc().toISO())
     .run();
 
   const session = await createSession(c.env, userId);
@@ -492,38 +529,56 @@ app.post('/api/auth/email/code/verify', async (c) => {
     .run();
 
   let userId: string | null = null;
+  let hasPasswordRecord = false;
   let createdAccount = false;
   const authUser = await c.env.DB.prepare('SELECT user_id FROM auth_email_password WHERE email = ?')
     .bind(parsed.email)
     .first();
   if (authUser) {
     userId = authUser.user_id as string;
+    hasPasswordRecord = true;
   } else {
-    const anonId = c.req.header('x-anon-id');
-    if (anonId) {
-      userId = anonId;
-      const timezone = c.req.header('x-timezone') ?? 'UTC';
-      await ensureAnonymousRecord(c.env, userId, timezone);
-      await c.env.DB.prepare('UPDATE users SET is_anonymous = 0 WHERE id = ?').bind(userId).run();
-      createdAccount = true;
-    } else {
-      const timezone = c.req.header('x-timezone') ?? 'UTC';
-      timeZoneSchema.parse(timezone);
-      userId = crypto.randomUUID();
-      await createAnonymousUser(c.env, userId, timezone, DEFAULT_PREFERENCES);
-      await ensureDefaultSchedule(c.env, userId, timezone);
-      await c.env.DB.prepare('UPDATE users SET is_anonymous = 0 WHERE id = ?').bind(userId).run();
-      createdAccount = true;
-    }
-    await c.env.DB.prepare(
-      'INSERT INTO auth_email_password (user_id, email, password_hash, created_at) VALUES (?, ?, ?, ?)'
+    const oauthUser = await c.env.DB.prepare(
+      'SELECT user_id FROM auth_oauth WHERE provider = ? AND email = ?'
     )
-      .bind(userId, parsed.email, hashPassword(crypto.randomUUID()), DateTime.utc().toISO())
-      .run();
+      .bind('google', parsed.email)
+      .first();
+    if (oauthUser) {
+      userId = oauthUser.user_id as string;
+    } else {
+      const anonId = c.req.header('x-anon-id');
+      if (anonId) {
+        userId = anonId;
+        const timezone = c.req.header('x-timezone') ?? 'UTC';
+        await ensureAnonymousRecord(c.env, userId, timezone);
+        await c.env.DB.prepare('UPDATE users SET is_anonymous = 0 WHERE id = ?')
+          .bind(userId)
+          .run();
+        createdAccount = true;
+      } else {
+        const timezone = c.req.header('x-timezone') ?? 'UTC';
+        timeZoneSchema.parse(timezone);
+        userId = crypto.randomUUID();
+        await createAnonymousUser(c.env, userId, timezone, DEFAULT_PREFERENCES);
+        await ensureDefaultSchedule(c.env, userId, timezone);
+        await c.env.DB.prepare('UPDATE users SET is_anonymous = 0 WHERE id = ?')
+          .bind(userId)
+          .run();
+        createdAccount = true;
+      }
+    }
   }
 
   if (!userId) {
     return c.json({ error: 'Unable to complete login' }, 500);
+  }
+
+  if (!hasPasswordRecord) {
+    await c.env.DB.prepare(
+      'INSERT INTO auth_email_password (user_id, email, password_hash, password_set, created_at) VALUES (?, ?, ?, ?, ?)'
+    )
+      .bind(userId, parsed.email, hashPassword(crypto.randomUUID()), 0, DateTime.utc().toISO())
+      .run();
   }
 
   const anonId = c.req.header('x-anon-id');
