@@ -3,8 +3,9 @@ import { DateTime } from 'luxon';
 import { getLocalDateKey } from '@word-of-the-day/shared';
 
 import { buildServerEvent, recordEvent } from '../analytics';
-import { Env, NotificationJob } from '../env';
+import { Env } from '../env';
 import { getDailyWordId } from '../words';
+import { sendWebPushNotification } from './push';
 
 const BATCH_SIZE = 50;
 
@@ -46,11 +47,8 @@ export async function processDueSchedules(env: Env): Promise<void> {
             metadata: { source: 'scheduled' },
           })
         );
-        await env.NOTIFICATION_QUEUE.send({
-          userId: schedule.user_id,
-          wordId,
-          dateKey,
-        } satisfies NotificationJob);
+        // Send push notifications directly (no queue needed)
+        await sendPushNotificationsForUser(env, schedule.user_id);
       }
 
       const nextDelivery = computeNextDelivery(schedule.timezone, schedule.delivery_time);
@@ -89,4 +87,40 @@ function computeNextDelivery(timezone: string, deliveryTime: string): string {
     throw new Error('Invalid delivery time');
   }
   return iso;
+}
+
+/**
+ * Send push notifications directly to all subscriptions for a user.
+ * Cleans up dead subscriptions (404/410 responses).
+ */
+async function sendPushNotificationsForUser(env: Env, userId: string): Promise<void> {
+  const subscriptions = await env.DB.prepare(
+    'SELECT endpoint FROM push_subscriptions WHERE user_id = ?'
+  )
+    .bind(userId)
+    .all();
+
+  const results = subscriptions.results as Array<{ endpoint: string }>;
+
+  // Send to all subscriptions in parallel
+  await Promise.all(
+    results.map(async (sub) => {
+      try {
+        const response = await sendWebPushNotification({
+          endpoint: sub.endpoint,
+          publicKey: env.VAPID_PUBLIC_KEY,
+          privateKey: env.VAPID_PRIVATE_KEY,
+          subject: env.VAPID_SUBJECT,
+        });
+        // Clean up dead subscriptions
+        if (response.status === 404 || response.status === 410) {
+          await env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?')
+            .bind(sub.endpoint)
+            .run();
+        }
+      } catch {
+        // Skip failures silently; user can still open the app to see the word
+      }
+    })
+  );
 }
