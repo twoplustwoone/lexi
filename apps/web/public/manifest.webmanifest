@@ -1,13 +1,13 @@
 {
-  "name": "Word of the Day",
-  "short_name": "WordDaily",
+  "name": "Lexi",
+  "short_name": "Lexi",
   "id": "/",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "background_color": "#f7f0e6",
   "theme_color": "#f7f0e6",
-  "description": "Daily word ritual with history, offline access, and gentle reminders.",
+  "description": "Lexi delivers a daily word ritual with history, offline access, and gentle reminders.",
   "icons": [
     {
       "src": "/icons/icon-192.png",
