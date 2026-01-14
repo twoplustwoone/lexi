@@ -1,7 +1,7 @@
 name = "word-of-the-day-api"
 main = "src/index.ts"
 compatibility_date = "2024-07-25"
-node_compat = true
+nodejs_compat = true
 
 [vars]
 APP_ENV = "development"
@@ -24,11 +24,29 @@ migrations_dir = "migrations"
 binding = "KV"
 id = "09c68a2322be4cab9ef0dc751895ab7f"
 
-[[queues.producers]]
-queue = "notifications"
-binding = "NOTIFICATION_QUEUE"
+# =============================================================================
+# Production Environment
+# =============================================================================
+# Deploy with: wrangler deploy --env production
+# Set secrets with: wrangler secret put <NAME> --env production
 
-[[queues.consumers]]
-queue = "notifications"
-max_batch_size = 10
-max_batch_timeout = 5
+[env.production.vars]
+APP_ENV = "production"
+CORS_ALLOW_ORIGIN = "https://YOUR_DOMAIN.com"
+SESSION_TTL_DAYS = "30"
+SESSION_COOKIE_SAMESITE = "Lax"
+COOKIE_SECURE = "true"
+VAPID_SUBJECT = "mailto:YOUR_EMAIL@yourdomain.com"
+
+[env.production.triggers]
+crons = ["*/15 * * * *"]
+
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "word_of_the_day"
+database_id = "64dfba7a-5c38-4dcb-b111-ebe6f89f4d33"
+migrations_dir = "migrations"
+
+[[env.production.kv_namespaces]]
+binding = "KV"
+id = "09c68a2322be4cab9ef0dc751895ab7f"
