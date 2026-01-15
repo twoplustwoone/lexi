@@ -6,6 +6,7 @@ import { fetchMe, getClientType, logout, registerAnonymousIdentity, trackEvent }
 import { getAnonymousId } from './identity';
 import { AuthSheet } from './components/AuthSheet';
 import { Button } from './components/Button';
+import { Loader } from './components/Loader';
 import { Home } from './screens/Home';
 import { History } from './screens/History';
 import { Settings } from './screens/Settings';
@@ -323,7 +324,7 @@ export function App() {
       <main className="flex-1">
         {!ready ? (
           <div className="rounded-[20px] border border-[rgba(30,27,22,0.12)] bg-card p-6 shadow-[0_18px_40px_rgba(29,25,18,0.12)]">
-            Loading your daily word...
+            <Loader label="Loading your daily word..." />
           </div>
         ) : (
           <PreactRouter>

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'preact/hooks';
 
 import { fetchTodayWord, markWordViewed, syncHistoryCache, syncSettingsCache } from '../api';
 import { Button } from '../components/Button';
+import { Loader } from '../components/Loader';
 import { getHistory } from '../storage';
 
 interface HomeProps {
@@ -20,31 +21,43 @@ type WordDisplay = {
   date: string;
 };
 
+let cachedWord: WordDisplay | null = null;
+let cachedReminder: string | null = null;
+
 export function Home({ user, onOpenAuth }: HomeProps) {
-  const [word, setWord] = useState<WordDisplay | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [word, setWord] = useState<WordDisplay | null>(() => cachedWord);
+  const [loading, setLoading] = useState(() => !cachedWord);
   const [error, setError] = useState<string | null>(null);
-  const [reminder, setReminder] = useState<string | null>(null);
+  const [reminder, setReminder] = useState<string | null>(() => cachedReminder);
 
   useEffect(() => {
+    const hasCachedWord = cachedWord !== null;
     const load = async () => {
-      setLoading(true);
-      setError(null);
+      if (!hasCachedWord) {
+        setLoading(true);
+        setError(null);
+      }
       try {
         const today = await fetchTodayWord();
-        setWord({ ...today.word, date: today.date });
+        const nextWord = { ...today.word, date: today.date };
+        cachedWord = nextWord;
+        setWord(nextWord);
         await markWordViewed(today.word.id);
         await syncHistoryCache();
       } catch {
         const cached = await getHistory();
         if (cached.length) {
           const latest = cached.sort((a, b) => b.delivered_at.localeCompare(a.delivered_at))[0];
-          setWord({ ...latest, date: latest.delivered_at });
-        } else {
+          const nextWord = { ...latest, date: latest.delivered_at };
+          cachedWord = nextWord;
+          setWord(nextWord);
+        } else if (!cachedWord) {
           setError("Unable to load today's word while offline.");
         }
       } finally {
-        setLoading(false);
+        if (!hasCachedWord) {
+          setLoading(false);
+        }
       }
     };
 
@@ -58,15 +71,17 @@ export function Home({ user, onOpenAuth }: HomeProps) {
         const permission = 'Notification' in window ? Notification.permission : 'denied';
         const supportsPush = 'serviceWorker' in navigator && 'PushManager' in window;
         if (settings.schedule.enabled && (!supportsPush || permission !== 'granted')) {
-          setReminder(
-            supportsPush
-              ? 'Notifications are enabled, but permission is blocked. Enable in browser settings.'
-              : 'This device cannot receive push notifications reliably. Open the app daily for your word.'
-          );
+          const message = supportsPush
+            ? 'Notifications are enabled, but permission is blocked. Enable in browser settings.'
+            : 'This device cannot receive push notifications reliably. Open the app daily for your word.';
+          cachedReminder = message;
+          setReminder(message);
         } else if (!settings.schedule.enabled) {
+          cachedReminder = 'Turn on notifications to receive your word at your chosen time.';
           setReminder('Turn on notifications to receive your word at your chosen time.');
         }
       } catch {
+        cachedReminder = null;
         setReminder(null);
       }
     };
@@ -77,7 +92,11 @@ export function Home({ user, onOpenAuth }: HomeProps) {
     'rounded-[20px] border border-[rgba(30,27,22,0.12)] bg-card shadow-[0_18px_40px_rgba(29,25,18,0.12)] animate-[fade-up_0.5s_ease_both] motion-reduce:animate-none';
 
   if (loading) {
-    return <div className={`${cardBase} p-6`}>Warming up the lexicon...</div>;
+    return (
+      <div className={`${cardBase} p-6`}>
+        <Loader label="Warming up the lexicon..." />
+      </div>
+    );
   }
 
   if (error) {

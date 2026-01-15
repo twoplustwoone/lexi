@@ -13,6 +13,7 @@ import {
   type AuthMethodsResponse,
 } from '../api';
 import { Button } from './Button';
+import { Loader } from './Loader';
 import { getAnonymousId } from '../identity';
 
 interface AuthSheetProps {
@@ -370,7 +371,7 @@ export function AuthSheet({ open, onClose, user, onUserChange }: AuthSheetProps)
                 />
               </label>
               <Button type="submit" disabled={isFetching || !email.trim()}>
-                {isFetching ? 'Checking...' : 'Continue'}
+                {isFetching ? <Loader label="Checking..." tone="light" /> : 'Continue'}
               </Button>
             </form>
           </div>
@@ -410,7 +411,7 @@ export function AuthSheet({ open, onClose, user, onUserChange }: AuthSheetProps)
                   />
                 </label>
                 <Button type="submit" disabled={isSubmitting}>
-                  {isSubmitting ? 'Working...' : actionLabel}
+                  {isSubmitting ? <Loader label="Working..." tone="light" /> : actionLabel}
                 </Button>
                 <div className="flex flex-wrap items-center gap-3 text-sm text-muted">
                   <span>
@@ -435,7 +436,7 @@ export function AuthSheet({ open, onClose, user, onUserChange }: AuthSheetProps)
               <form className="grid gap-4" onSubmit={handleCodeVerify}>
                 {!codeSent ? (
                   <Button type="button" onClick={handleCodeRequest} disabled={isSubmitting}>
-                    {isSubmitting ? 'Sending...' : 'Send code'}
+                    {isSubmitting ? <Loader label="Sending..." tone="light" /> : 'Send code'}
                   </Button>
                 ) : (
                   <>
@@ -450,7 +451,7 @@ export function AuthSheet({ open, onClose, user, onUserChange }: AuthSheetProps)
                       />
                     </label>
                     <Button type="submit" disabled={isSubmitting || !emailCode.trim()}>
-                      {isSubmitting ? 'Verifying...' : 'Verify code'}
+                      {isSubmitting ? <Loader label="Verifying..." tone="light" /> : 'Verify code'}
                     </Button>
                     <Button
                       variant="link"

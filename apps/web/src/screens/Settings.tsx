@@ -10,7 +10,9 @@ import {
   subscribePush,
 } from '../api';
 import { Button } from '../components/Button';
+import { Loader } from '../components/Loader';
 import { getAnonymousId, getTimeZone } from '../identity';
+import type { SettingsState } from '../storage';
 
 interface SettingsProps {
   path?: string;
@@ -40,27 +42,41 @@ function getValidatedVapidKey(base64Key: string): Uint8Array {
   }
 }
 
+let cachedSettings: SettingsState | null = null;
+
 export function Settings({ user }: SettingsProps) {
-  const [enabled, setEnabled] = useState(false);
-  const [deliveryTime, setDeliveryTime] = useState('09:00');
-  const [timezone, setTimezone] = useState(getTimeZone());
+  const [enabled, setEnabled] = useState(() => cachedSettings?.schedule.enabled ?? false);
+  const [deliveryTime, setDeliveryTime] = useState(
+    () => cachedSettings?.schedule.delivery_time ?? '09:00'
+  );
+  const [timezone, setTimezone] = useState(
+    () => cachedSettings?.schedule.timezone ?? getTimeZone()
+  );
   const [message, setMessage] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !cachedSettings);
+  const [isToggling, setIsToggling] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const supportsPush =
     'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
   const getErrorMessage = (error: unknown, fallback: string) =>
     error instanceof Error ? error.message : fallback;
 
   useEffect(() => {
+    const hasCachedSettings = cachedSettings !== null;
     const load = async () => {
-      setLoading(true);
+      if (!hasCachedSettings) {
+        setLoading(true);
+      }
       try {
         const settings = await syncSettingsCache();
+        cachedSettings = settings;
         setEnabled(settings.schedule.enabled);
         setDeliveryTime(settings.schedule.delivery_time);
         setTimezone(settings.schedule.timezone);
       } finally {
-        setLoading(false);
+        if (!hasCachedSettings) {
+          setLoading(false);
+        }
       }
     };
     void load();
@@ -73,76 +89,98 @@ export function Settings({ user }: SettingsProps) {
       return;
     }
 
-    if (nextEnabled) {
-      const permission = await Notification.requestPermission();
-      if (permission !== 'granted') {
-        setMessage('Notification permission was denied.');
-        await updateSettingsRemote({ enabled: false, delivery_time: deliveryTime, timezone });
-        setEnabled(false);
-        return;
-      }
-
-      await trackEvent({
-        event_name: 'notification_permission_granted',
-        timestamp: new Date().toISOString(),
-        user_id: user.userId || getAnonymousId(),
-        client: getClientType(),
-      });
-
-      const registration = await navigator.serviceWorker.ready;
-      const existing = await registration.pushManager.getSubscription();
-      let subscription = existing;
-      if (!subscription) {
-        let key: Uint8Array;
-        try {
-          const rawKey = await fetchVapidKey();
-          key = getValidatedVapidKey(rawKey);
-        } catch (error: unknown) {
-          setMessage(getErrorMessage(error, 'Push setup failed. Check VAPID keys.'));
+    setIsToggling(true);
+    try {
+      if (nextEnabled) {
+        const permission = await Notification.requestPermission();
+        if (permission !== 'granted') {
+          setMessage('Notification permission was denied.');
+          await updateSettingsRemote({ enabled: false, delivery_time: deliveryTime, timezone });
           setEnabled(false);
           return;
         }
-        const applicationServerKey = key as unknown as BufferSource;
-        subscription = await registration.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey,
+
+        await trackEvent({
+          event_name: 'notification_permission_granted',
+          timestamp: new Date().toISOString(),
+          user_id: user.userId || getAnonymousId(),
+          client: getClientType(),
         });
-      }
-      await subscribePush(subscription.toJSON());
-      await trackEvent({
-        event_name: 'notification_enabled',
-        timestamp: new Date().toISOString(),
-        user_id: user.userId || getAnonymousId(),
-        client: getClientType(),
-      });
-    } else {
-      if (supportsPush) {
+
         const registration = await navigator.serviceWorker.ready;
-        const subscription = await registration.pushManager.getSubscription();
-        if (subscription) {
-          await unsubscribePush(subscription.endpoint);
-          await subscription.unsubscribe();
+        const existing = await registration.pushManager.getSubscription();
+        let subscription = existing;
+        if (!subscription) {
+          let key: Uint8Array;
+          try {
+            const rawKey = await fetchVapidKey();
+            key = getValidatedVapidKey(rawKey);
+          } catch (error: unknown) {
+            setMessage(getErrorMessage(error, 'Push setup failed. Check VAPID keys.'));
+            setEnabled(false);
+            return;
+          }
+          const applicationServerKey = key as unknown as BufferSource;
+          subscription = await registration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey,
+          });
+        }
+        await subscribePush(subscription.toJSON());
+        await trackEvent({
+          event_name: 'notification_enabled',
+          timestamp: new Date().toISOString(),
+          user_id: user.userId || getAnonymousId(),
+          client: getClientType(),
+        });
+      } else {
+        if (supportsPush) {
+          const registration = await navigator.serviceWorker.ready;
+          const subscription = await registration.pushManager.getSubscription();
+          if (subscription) {
+            await unsubscribePush(subscription.endpoint);
+            await subscription.unsubscribe();
+          }
         }
       }
-    }
 
-    await updateSettingsRemote({ enabled: nextEnabled, delivery_time: deliveryTime, timezone });
-    await syncSettingsCache();
-    setEnabled(nextEnabled);
+      await updateSettingsRemote({ enabled: nextEnabled, delivery_time: deliveryTime, timezone });
+      const updated = await syncSettingsCache();
+      cachedSettings = updated;
+      setEnabled(updated.schedule.enabled);
+      setDeliveryTime(updated.schedule.delivery_time);
+      setTimezone(updated.schedule.timezone);
+    } finally {
+      setIsToggling(false);
+    }
   };
 
   const handleSave = async (event: Event) => {
     event.preventDefault();
-    await updateSettingsRemote({ enabled, delivery_time: deliveryTime, timezone });
-    await syncSettingsCache();
-    setMessage('Saved. Changes apply next day.');
+    setMessage(null);
+    setIsSaving(true);
+    try {
+      await updateSettingsRemote({ enabled, delivery_time: deliveryTime, timezone });
+      const updated = await syncSettingsCache();
+      cachedSettings = updated;
+      setEnabled(updated.schedule.enabled);
+      setDeliveryTime(updated.schedule.delivery_time);
+      setTimezone(updated.schedule.timezone);
+      setMessage('Saved. Changes apply next day.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const cardBase =
     'rounded-[20px] border border-[rgba(30,27,22,0.12)] bg-card shadow-[0_18px_40px_rgba(29,25,18,0.12)] animate-[fade-up_0.5s_ease_both] motion-reduce:animate-none';
 
   if (loading) {
-    return <div className={`${cardBase} p-6`}>Loading settings...</div>;
+    return (
+      <div className={`${cardBase} p-6`}>
+        <Loader label="Loading settings..." />
+      </div>
+    );
   }
 
   return (
@@ -154,6 +192,7 @@ export function Settings({ user }: SettingsProps) {
             <input
               type="checkbox"
               checked={enabled}
+              disabled={isToggling || isSaving}
               className="peer sr-only"
               onChange={(event) => handleToggle(event.currentTarget.checked)}
             />
@@ -161,7 +200,10 @@ export function Settings({ user }: SettingsProps) {
             <span className="pointer-events-none absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow-[0_4px_8px_rgba(0,0,0,0.15)] transition-transform peer-checked:translate-x-5" />
           </label>
           <div>
-            <p className="text-sm font-semibold">Daily reminder</p>
+            <div className="flex items-center gap-2">
+              <p className="text-sm font-semibold">Daily reminder</p>
+              {isToggling ? <Loader label="Updating..." className="text-xs" /> : null}
+            </div>
             <p className="text-sm text-muted">Receive your word once per day.</p>
           </div>
         </div>
@@ -187,8 +229,8 @@ export function Settings({ user }: SettingsProps) {
         </label>
 
         {message ? <p className="mt-3 text-sm text-accent-strong">{message}</p> : null}
-        <Button className="mt-4" type="submit">
-          Save settings
+        <Button className="mt-4" type="submit" disabled={isSaving || isToggling}>
+          {isSaving ? <Loader label="Saving..." tone="light" /> : 'Save settings'}
         </Button>
       </form>
 

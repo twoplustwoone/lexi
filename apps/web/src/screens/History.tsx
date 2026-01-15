@@ -3,28 +3,39 @@ import { useEffect, useState } from 'preact/hooks';
 import { fetchHistory, getClientType, trackEvent } from '../api';
 import { HistoryEntry, getHistory, saveHistory } from '../storage';
 import { getAnonymousId } from '../identity';
+import { Loader } from '../components/Loader';
 
 interface HistoryProps {
   path?: string;
   user: { userId: string | null };
 }
 
+let cachedHistory: HistoryEntry[] | null = null;
+
 export function History({ user }: HistoryProps) {
-  const [history, setHistory] = useState<HistoryEntry[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [history, setHistory] = useState<HistoryEntry[]>(() => cachedHistory ?? []);
+  const [loading, setLoading] = useState(() => cachedHistory === null);
 
   useEffect(() => {
+    const hasCachedHistory = cachedHistory !== null;
     const load = async () => {
-      setLoading(true);
+      if (!hasCachedHistory) {
+        setLoading(true);
+      }
       try {
         const remote = await fetchHistory();
         await saveHistory(remote);
+        cachedHistory = remote;
         setHistory(remote);
       } catch {
         const cached = await getHistory();
-        setHistory(cached.sort((a, b) => b.delivered_at.localeCompare(a.delivered_at)));
+        const sorted = cached.sort((a, b) => b.delivered_at.localeCompare(a.delivered_at));
+        cachedHistory = sorted;
+        setHistory(sorted);
       } finally {
-        setLoading(false);
+        if (!hasCachedHistory) {
+          setLoading(false);
+        }
       }
     };
     void load();
@@ -40,7 +51,11 @@ export function History({ user }: HistoryProps) {
     'rounded-[20px] border border-[rgba(30,27,22,0.12)] bg-card shadow-[0_18px_40px_rgba(29,25,18,0.12)] animate-[fade-up_0.5s_ease_both] motion-reduce:animate-none';
 
   if (loading) {
-    return <div className={`${cardBase} p-6`}>Collecting your past words...</div>;
+    return (
+      <div className={`${cardBase} p-6`}>
+        <Loader label="Collecting your past words..." />
+      </div>
+    );
   }
 
   if (!history.length) {
