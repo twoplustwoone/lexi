@@ -1,8 +1,15 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
-import PreactRouter, { useRouter } from 'preact-router';
+import PreactRouter, { route, useRouter } from 'preact-router';
 import { Link } from 'preact-router/match';
 
-import { fetchMe, getClientType, logout, registerAnonymousIdentity, trackEvent } from './api';
+import {
+  fetchMe,
+  getClientType,
+  logout,
+  registerAnonymousIdentity,
+  resetAnonymousIdentity,
+  trackEvent,
+} from './api';
 import { getAnonymousId } from './identity';
 import { AuthSheet } from './components/AuthSheet';
 import { Button } from './components/Button';
@@ -129,6 +136,36 @@ function NavLinks() {
       </Link>
     </nav>
   );
+}
+
+function NotFoundRedirect() {
+  useEffect(() => {
+    route('/', true);
+  }, []);
+  return null;
+}
+
+function AdminRoute({
+  user,
+  onOpenAuth,
+  onUserChange,
+}: {
+  path?: string;
+  user: UserState;
+  onOpenAuth: () => void;
+  onUserChange: (next: UserState) => void;
+}) {
+  useEffect(() => {
+    if (!user.isAdmin) {
+      route('/', true);
+    }
+  }, [user.isAdmin]);
+
+  if (!user.isAdmin) {
+    return null;
+  }
+
+  return <Account user={user} onOpenAuth={onOpenAuth} onUserChange={onUserChange} />;
 }
 
 function AvatarMenu({
@@ -261,9 +298,13 @@ export function App() {
       await logout();
     } catch {
       // Ignore logout failures and try to refresh state.
-    } finally {
-      await refreshUser();
     }
+    try {
+      await resetAnonymousIdentity();
+    } catch {
+      // Ignore anonymous re-registration failures.
+    }
+    await refreshUser();
   };
 
   const AuthAction = ({ className }: { className?: string }) =>
@@ -343,7 +384,8 @@ export function App() {
             <Home path="/" user={user} onOpenAuth={openAuth} />
             <History path="/history" user={user} />
             <Settings path="/settings" user={user} />
-            <Account path="/admin" user={user} onOpenAuth={openAuth} onUserChange={setUser} />
+            <AdminRoute path="/admin" user={user} onOpenAuth={openAuth} onUserChange={setUser} />
+            <NotFoundRedirect default />
           </PreactRouter>
         )}
       </main>

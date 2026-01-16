@@ -17,7 +17,7 @@ import {
 import { buildServerEvent, recordEvent } from './analytics';
 import { sendEmailCode } from './auth/email';
 import { verifyGoogleIdToken } from './auth/google';
-import { resolveUserId } from './auth/identity';
+import { resolveAnonymousId, resolveUserId } from './auth/identity';
 import { mergeAnonymousIntoUser } from './auth/merge';
 import { buildExpiry, createCodeHash, generateNumericCode } from './auth/otp';
 import {
@@ -83,8 +83,18 @@ app.post('/api/identity/anonymous', async (c) => {
   const existing = await getUserById(c.env, parsed.id);
   if (!existing) {
     await createAnonymousUser(c.env, parsed.id, parsed.timezone, DEFAULT_PREFERENCES);
-  } else if (existing.timezone !== parsed.timezone) {
+  } else if (existing.is_anonymous !== 1) {
+    return c.json({ error: 'User already exists' }, 409);
+  } else if (!existing.merged_into_user_id && existing.timezone !== parsed.timezone) {
     await updateUserTimezone(c.env, parsed.id, parsed.timezone);
+  }
+
+  if (existing?.merged_into_user_id) {
+    return c.json({
+      ok: true,
+      user_id: parsed.id,
+      merged_into_user_id: existing.merged_into_user_id,
+    });
   }
 
   const schedule = await getNotificationSchedule(c.env, parsed.id);
@@ -126,7 +136,7 @@ app.get('/api/me', async (c) => {
       is_admin: user?.is_admin === 1,
     });
   }
-  const anonId = c.req.header('x-anon-id');
+  const anonId = await resolveAnonymousId(c.env, c.req.raw);
   return c.json({
     user_id: anonId ?? null,
     is_authenticated: false,
@@ -327,17 +337,35 @@ app.post('/api/notifications/subscribe', async (c) => {
 });
 
 app.post('/api/notifications/unsubscribe', async (c) => {
+  const userId = await resolveUserId(c.env, c.req.raw);
+  if (!userId) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
   const body = await c.req.json();
   const parsed = z.object({ endpoint: z.string().url() }).parse(body);
-  await c.env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?')
-    .bind(parsed.endpoint)
+  await c.env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint = ? AND user_id = ?')
+    .bind(parsed.endpoint, userId)
     .run();
   return c.json({ ok: true });
 });
 
 app.post('/api/events', async (c) => {
+  const userId = await resolveUserId(c.env, c.req.raw);
+  if (!userId) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
   const body = await c.req.json();
   const parsed = eventSchema.parse(body);
+  if (parsed.user_id !== userId) {
+    const mergedRecord = await c.env.DB.prepare(
+      'SELECT merged_into_user_id FROM users WHERE id = ?'
+    )
+      .bind(parsed.user_id)
+      .first();
+    if (!mergedRecord || mergedRecord.merged_into_user_id !== userId) {
+      return c.json({ error: 'Forbidden' }, 403);
+    }
+  }
   await recordEvent(c.env, parsed);
   return c.json({ ok: true });
 });
@@ -389,7 +417,7 @@ app.post('/api/auth/signup', async (c) => {
     return c.json({ error: 'Email already in use' }, 409);
   }
 
-  const anonId = c.req.header('x-anon-id');
+  const anonId = await resolveAnonymousId(c.env, c.req.raw);
   let userId = anonId;
   if (!userId) {
     const timezone = c.req.header('x-timezone') ?? 'UTC';
@@ -463,7 +491,7 @@ app.post('/api/auth/login', async (c) => {
   if (!ok) {
     return c.json({ error: 'Invalid credentials' }, 401);
   }
-  const anonId = c.req.header('x-anon-id');
+  const anonId = await resolveAnonymousId(c.env, c.req.raw);
   if (anonId) {
     await mergeAnonymousIntoUser(c.env, anonId, record.user_id as string);
   }
@@ -548,7 +576,7 @@ app.post('/api/auth/email/code/verify', async (c) => {
     if (oauthUser) {
       userId = oauthUser.user_id as string;
     } else {
-      const anonId = c.req.header('x-anon-id');
+      const anonId = await resolveAnonymousId(c.env, c.req.raw);
       if (anonId) {
         userId = anonId;
         const timezone = c.req.header('x-timezone') ?? 'UTC';
@@ -579,7 +607,7 @@ app.post('/api/auth/email/code/verify', async (c) => {
       .run();
   }
 
-  const anonId = c.req.header('x-anon-id');
+  const anonId = await resolveAnonymousId(c.env, c.req.raw);
   if (anonId && anonId !== userId) {
     await mergeAnonymousIntoUser(c.env, anonId, userId);
   }
@@ -615,7 +643,7 @@ app.post('/api/auth/google', async (c) => {
 
   let createdAccount = false;
   if (!userId) {
-    const anonId = c.req.header('x-anon-id');
+    const anonId = await resolveAnonymousId(c.env, c.req.raw);
     if (anonId) {
       userId = anonId;
       const timezone = c.req.header('x-timezone') ?? 'UTC';
@@ -645,7 +673,7 @@ app.post('/api/auth/google', async (c) => {
       .run();
   }
 
-  const anonId = c.req.header('x-anon-id');
+  const anonId = await resolveAnonymousId(c.env, c.req.raw);
   if (anonId && anonId !== userId) {
     await mergeAnonymousIntoUser(c.env, anonId, userId);
   }
@@ -1182,6 +1210,8 @@ async function ensureAnonymousRecord(env: Env, userId: string, timezone: string)
   if (!existing) {
     await createAnonymousUser(env, userId, timezone, DEFAULT_PREFERENCES);
     await ensureDefaultSchedule(env, userId, timezone);
+  } else if (existing.is_anonymous !== 1 || existing.merged_into_user_id) {
+    return;
   } else if (existing.timezone !== timezone) {
     await updateUserTimezone(env, userId, timezone);
   }

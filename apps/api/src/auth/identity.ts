@@ -4,6 +4,18 @@ import { Env } from '../env';
 import { createAnonymousUser, getUserById } from '../db';
 import { getSessionUserId, parseCookies } from './sessions';
 
+export async function resolveAnonymousId(env: Env, request: Request): Promise<string | null> {
+  const anonId = request.headers.get('x-anon-id');
+  if (!anonId) {
+    return null;
+  }
+  const record = await getUserById(env, anonId);
+  if (!record || record.is_anonymous !== 1 || record.merged_into_user_id) {
+    return null;
+  }
+  return anonId;
+}
+
 export async function resolveUserId(env: Env, request: Request): Promise<string | null> {
   const cookieHeader = request.headers.get('cookie');
   const cookies = parseCookies(cookieHeader);
@@ -12,8 +24,7 @@ export async function resolveUserId(env: Env, request: Request): Promise<string 
   if (sessionUserId) {
     return sessionUserId;
   }
-  const anonId = request.headers.get('x-anon-id');
-  return anonId ?? null;
+  return resolveAnonymousId(env, request);
 }
 
 export async function ensureAnonymousUserExists(
@@ -26,7 +37,7 @@ export async function ensureAnonymousUserExists(
     await createAnonymousUser(env, params.userId, params.timezone, DEFAULT_PREFERENCES);
     return;
   }
-  if (existing.merged_into_user_id) {
+  if (existing.is_anonymous !== 1 || existing.merged_into_user_id) {
     return;
   }
 }

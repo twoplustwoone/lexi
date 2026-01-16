@@ -1,6 +1,6 @@
 import { useState } from 'preact/hooks';
 
-import { fetchMe, logout, sendAdminTestNotification } from '../api';
+import { fetchMe, logout, resetAnonymousIdentity, sendAdminTestNotification } from '../api';
 import { AdminPanel } from '../components/AdminPanel';
 import { Button } from '../components/Button';
 import { getAnonymousId } from '../identity';
@@ -40,7 +40,16 @@ export function Account({ user, onOpenAuth, onUserChange }: AccountProps) {
   };
 
   const handleLogout = async () => {
-    await logout();
+    try {
+      await logout();
+    } catch {
+      // Ignore logout failures and try to refresh state.
+    }
+    try {
+      await resetAnonymousIdentity();
+    } catch {
+      // Ignore anonymous re-registration failures.
+    }
     await refreshUser();
     setStatus('Signed out.');
   };

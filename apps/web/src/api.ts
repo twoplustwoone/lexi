@@ -67,20 +67,35 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
 }
 
 export async function registerAnonymousIdentity(): Promise<void> {
-  const payload = {
-    id: getAnonymousId(),
-    timezone: getTimeZone(),
-  };
-  const response = await apiFetch<{ ok: boolean; merged_into_user_id?: string | null }>(
-    '/identity/anonymous',
-    {
+  const timezone = getTimeZone();
+  let anonId = getAnonymousId();
+  const register = async (id: string) =>
+    apiFetch<{ ok: boolean; merged_into_user_id?: string | null }>('/identity/anonymous', {
       method: 'POST',
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ id, timezone }),
+    });
+
+  try {
+    const response = await register(anonId);
+    if (response.merged_into_user_id) {
+      anonId = crypto.randomUUID();
+      setAnonymousId(anonId);
+      await register(anonId);
     }
-  );
-  if (response.merged_into_user_id) {
-    setAnonymousId(response.merged_into_user_id);
+  } catch (error) {
+    if (error instanceof Error && error.message === 'User already exists') {
+      anonId = crypto.randomUUID();
+      setAnonymousId(anonId);
+      await register(anonId);
+      return;
+    }
+    throw error;
   }
+}
+
+export async function resetAnonymousIdentity(): Promise<void> {
+  setAnonymousId(crypto.randomUUID());
+  await registerAnonymousIdentity();
 }
 
 export async function fetchMe(): Promise<{

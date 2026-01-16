@@ -139,9 +139,13 @@ async function flushOutbox() {
 
   for (const item of items) {
     try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (item.event && item.event.user_id) {
+        headers['X-Anon-Id'] = item.event.user_id;
+      }
       const response = await fetch('/api/events', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(item.event),
       });
       if (response.ok) {
