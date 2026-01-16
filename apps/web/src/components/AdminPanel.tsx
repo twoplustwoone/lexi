@@ -30,7 +30,16 @@ export function AdminPanel({ currentUserId }: AdminPanelProps) {
     loadUsers();
   }, []);
 
-  const handleToggleAdmin = async (userId: string, currentIsAdmin: boolean) => {
+  const handleToggleAdmin = async (
+    userId: string,
+    currentIsAdmin: boolean,
+    displayName: string
+  ) => {
+    const actionLabel = currentIsAdmin ? 'remove admin access for' : 'make admin';
+    const shouldProceed = window.confirm(`Are you sure you want to ${actionLabel} ${displayName}?`);
+    if (!shouldProceed) {
+      return;
+    }
     setTogglingId(userId);
     try {
       await setUserAdmin(userId, !currentIsAdmin);
@@ -112,7 +121,7 @@ export function AdminPanel({ currentUserId }: AdminPanelProps) {
                     variant={user.isAdmin ? 'outline' : 'secondary'}
                     size="sm"
                     disabled={togglingId === user.id || user.id === currentUserId}
-                    onClick={() => handleToggleAdmin(user.id, user.isAdmin)}
+                    onClick={() => handleToggleAdmin(user.id, user.isAdmin, getDisplayName(user))}
                   >
                     {togglingId === user.id
                       ? '...'

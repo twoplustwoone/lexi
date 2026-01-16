@@ -171,7 +171,7 @@ test('shows sign-in options when signed out', async ({ page }) => {
       is_admin: false,
     },
   });
-  await page.goto('/account');
+  await page.goto('/admin');
   await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Email + Password' })).toBeVisible();
 });
@@ -185,7 +185,7 @@ test('shows admin actions when authenticated as admin', async ({ page }) => {
       is_admin: true,
     },
   });
-  await page.goto('/account');
+  await page.goto('/admin');
   await expect(page.getByText('Signed in as admin-user')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Send test notification' })).toBeVisible();

@@ -168,6 +168,8 @@ function AvatarMenu({
   }
 
   const initial = user.userId?.charAt(0)?.toUpperCase() ?? 'L';
+  const menuItemClassName =
+    'flex w-full cursor-pointer items-center px-5 py-3 text-left font-semibold text-ink no-underline transition-colors hover:bg-sand focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2';
 
   return (
     <div ref={menuRef} className="relative">
@@ -185,11 +187,21 @@ function AvatarMenu({
       {open ? (
         <div
           role="menu"
-          className="absolute right-0 z-50 mt-2 w-44 overflow-hidden rounded-xl border border-[rgba(30,27,22,0.12)] bg-white text-sm shadow-[0_16px_32px_rgba(29,25,18,0.12)]"
+          className="absolute right-0 z-50 mt-2 w-52 overflow-hidden rounded-2xl border border-[rgba(30,27,22,0.12)] bg-white text-base shadow-[0_16px_32px_rgba(29,25,18,0.12)]"
         >
+          {user.isAdmin ? (
+            <Link
+              href="/admin"
+              className={menuItemClassName}
+              role="menuitem"
+              onClick={() => setOpen(false)}
+            >
+              Admin
+            </Link>
+          ) : null}
           <Link
             href="/settings"
-            className="block cursor-pointer px-4 py-2 font-semibold text-ink no-underline transition-colors hover:bg-sand"
+            className={menuItemClassName}
             role="menuitem"
             onClick={() => setOpen(false)}
           >
@@ -197,7 +209,7 @@ function AvatarMenu({
           </Link>
           <button
             type="button"
-            className="block w-full cursor-pointer px-4 py-2 text-left font-semibold text-ink transition-colors hover:bg-sand"
+            className={menuItemClassName}
             role="menuitem"
             onClick={async () => {
               setOpen(false);
@@ -331,7 +343,7 @@ export function App() {
             <Home path="/" user={user} onOpenAuth={openAuth} />
             <History path="/history" user={user} />
             <Settings path="/settings" user={user} />
-            <Account path="/account" user={user} onOpenAuth={openAuth} onUserChange={setUser} />
+            <Account path="/admin" user={user} onOpenAuth={openAuth} onUserChange={setUser} />
           </PreactRouter>
         )}
       </main>
