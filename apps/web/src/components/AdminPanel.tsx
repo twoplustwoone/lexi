@@ -95,7 +95,10 @@ export function AdminPanel({ currentUserId }: AdminPanelProps) {
     }
     const parts = [...user.authProviders]
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-      .map((provider) => `${formatProviderLabel(provider.provider)} (${formatDate(provider.createdAt)})`);
+      .map(
+        (provider) =>
+          `${formatProviderLabel(provider.provider)} (${formatDate(provider.createdAt)})`
+      );
     return `Auth: ${parts.join(' | ')}`;
   };
 
@@ -178,12 +181,7 @@ export function AdminPanel({ currentUserId }: AdminPanelProps) {
 
       {nextCursor && (
         <div className="flex justify-center">
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={loadingMore}
-            onClick={loadMoreUsers}
-          >
+          <Button variant="secondary" size="sm" disabled={loadingMore} onClick={loadMoreUsers}>
             {loadingMore ? 'Loading...' : 'Load more'}
           </Button>
         </div>

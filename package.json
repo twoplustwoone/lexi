@@ -16,7 +16,8 @@
     "format": "prettier --write .",
     "seed:words": "node scripts/seed-words.mjs",
     "seed:admin": "node scripts/seed-admin.mjs",
-    "generate:vapid": "node scripts/generate-vapid.mjs"
+    "generate:vapid": "node scripts/generate-vapid.mjs",
+    "validate": "npm run lint && npm run typecheck && npm run test"
   },
   "devDependencies": {
     "@types/node": "^20.14.10",
