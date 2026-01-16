@@ -20,7 +20,10 @@ export function createVapidJwt(audience: string, subject: string, keys: VapidKey
   const signingInput = `${headerB64}.${payloadB64}`;
 
   const signature = p256
-    .sign(new TextEncoder().encode(signingInput), base64UrlDecode(keys.privateKey))
+    .sign(new TextEncoder().encode(signingInput), base64UrlDecode(keys.privateKey), {
+      prehash: true,
+      lowS: true,
+    })
     .toCompactRawBytes();
   const signatureB64 = base64UrlEncode(signature);
 
