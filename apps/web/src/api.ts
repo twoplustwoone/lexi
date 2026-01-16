@@ -244,11 +244,33 @@ export interface AdminUser {
   isAnonymous: boolean;
   isAdmin: boolean;
   createdAt: string;
+  authProviders: AdminAuthProvider[];
 }
 
-export async function fetchAdminUsers(): Promise<AdminUser[]> {
-  const response = await apiFetch<{ users: AdminUser[] }>('/admin/users');
-  return response.users;
+export interface AdminAuthProvider {
+  provider: string;
+  email: string | null;
+  createdAt: string;
+}
+
+export interface AdminUsersResponse {
+  users: AdminUser[];
+  nextCursor: string | null;
+}
+
+export async function fetchAdminUsers(
+  cursor?: string,
+  limit?: number
+): Promise<AdminUsersResponse> {
+  const params = new URLSearchParams();
+  if (cursor) {
+    params.set('cursor', cursor);
+  }
+  if (limit) {
+    params.set('limit', String(limit));
+  }
+  const query = params.toString();
+  return apiFetch<AdminUsersResponse>(`/admin/users${query ? `?${query}` : ''}`);
 }
 
 export async function setUserAdmin(userId: string, isAdmin: boolean): Promise<void> {

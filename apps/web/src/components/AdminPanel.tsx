@@ -11,18 +11,40 @@ export function AdminPanel({ currentUserId }: AdminPanelProps) {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   const loadUsers = async () => {
     try {
       setLoading(true);
       setError(null);
-      const data = await fetchAdminUsers();
-      setUsers(data);
+      setLoadMoreError(null);
+      const response = await fetchAdminUsers();
+      setUsers(response.users);
+      setNextCursor(response.nextCursor);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load users');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadMoreUsers = async () => {
+    if (!nextCursor || loadingMore) {
+      return;
+    }
+    try {
+      setLoadingMore(true);
+      setLoadMoreError(null);
+      const response = await fetchAdminUsers(nextCursor);
+      setUsers((prev) => [...prev, ...response.users]);
+      setNextCursor(response.nextCursor);
+    } catch (err) {
+      setLoadMoreError(err instanceof Error ? err.message : 'Failed to load more users');
+    } finally {
+      setLoadingMore(false);
     }
   };
 
@@ -61,6 +83,22 @@ export function AdminPanel({ currentUserId }: AdminPanelProps) {
     });
   };
 
+  const formatProviderLabel = (provider: string) => {
+    if (provider === 'password') return 'Password';
+    if (provider === 'google') return 'Google';
+    return provider;
+  };
+
+  const getAuthSummary = (user: AdminUser) => {
+    if (!user.authProviders || user.authProviders.length === 0) {
+      return 'Auth: none';
+    }
+    const parts = [...user.authProviders]
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map((provider) => `${formatProviderLabel(provider.provider)} (${formatDate(provider.createdAt)})`);
+    return `Auth: ${parts.join(' | ')}`;
+  };
+
   const getDisplayName = (user: AdminUser) => {
     if (user.email) return user.email;
     if (user.username) return user.username;
@@ -86,9 +124,6 @@ export function AdminPanel({ currentUserId }: AdminPanelProps) {
     );
   }
 
-  const nonAnonymousUsers = users.filter((u) => !u.isAnonymous);
-  const anonymousUsers = users.filter((u) => u.isAnonymous);
-
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -98,11 +133,11 @@ export function AdminPanel({ currentUserId }: AdminPanelProps) {
         </Button>
       </div>
 
-      {nonAnonymousUsers.length > 0 && (
+      {users.length > 0 && (
         <div>
           <h4 className="mb-2 text-sm font-medium text-muted">Registered Users</h4>
           <ul className="space-y-2">
-            {nonAnonymousUsers.map((user) => (
+            {users.map((user) => (
               <li
                 key={user.id}
                 className="flex items-center justify-between rounded-lg border border-[rgba(30,27,22,0.08)] bg-surface p-3"
@@ -110,6 +145,7 @@ export function AdminPanel({ currentUserId }: AdminPanelProps) {
                 <div className="min-w-0 flex-1">
                   <p className="truncate font-medium">{getDisplayName(user)}</p>
                   <p className="text-xs text-muted">Joined {formatDate(user.createdAt)}</p>
+                  <p className="text-xs text-muted">{getAuthSummary(user)}</p>
                 </div>
                 <div className="ml-3 flex items-center gap-2">
                   {user.isAdmin && (
@@ -138,14 +174,18 @@ export function AdminPanel({ currentUserId }: AdminPanelProps) {
         </div>
       )}
 
-      {anonymousUsers.length > 0 && (
-        <div>
-          <h4 className="mb-2 text-sm font-medium text-muted">
-            Anonymous Users ({anonymousUsers.length})
-          </h4>
-          <p className="text-xs text-muted">
-            Anonymous users cannot be made admins. They need to sign in first.
-          </p>
+      {loadMoreError && <p className="text-xs text-red-600">{loadMoreError}</p>}
+
+      {nextCursor && (
+        <div className="flex justify-center">
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={loadingMore}
+            onClick={loadMoreUsers}
+          >
+            {loadingMore ? 'Loading...' : 'Load more'}
+          </Button>
         </div>
       )}
 

@@ -906,6 +906,30 @@ app.get('/api/admin/subscriptions', async (c) => {
   });
 });
 
+function toBase64Url(input: string): string {
+  return btoa(input).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function fromBase64Url(input: string): string {
+  const padded = input.replace(/-/g, '+').replace(/_/g, '/');
+  const padLength = (4 - (padded.length % 4)) % 4;
+  const base64 = padded + '='.repeat(padLength);
+  return atob(base64);
+}
+
+function encodeAdminCursor(createdAt: string, id: string): string {
+  return toBase64Url(`${createdAt}|${id}`);
+}
+
+function decodeAdminCursor(cursor: string): { createdAt: string; id: string } {
+  const decoded = fromBase64Url(cursor);
+  const [createdAt, id] = decoded.split('|');
+  if (!createdAt || !id) {
+    throw new Error('Invalid cursor');
+  }
+  return { createdAt, id };
+}
+
 app.get('/api/admin/users', async (c) => {
   const cookies = parseCookies(c.req.header('cookie') ?? null);
   const token = cookies.session ?? null;
@@ -918,33 +942,137 @@ app.get('/api/admin/users', async (c) => {
     return c.json({ error: 'Forbidden' }, 403);
   }
 
+  const url = new URL(c.req.url);
+  const limitParam = Number.parseInt(url.searchParams.get('limit') ?? '', 10);
+  const limit =
+    Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, 200) : 50;
+
+  const cursorParam = url.searchParams.get('cursor');
+  let cursor: { createdAt: string; id: string } | null = null;
+  if (cursorParam) {
+    try {
+      cursor = decodeAdminCursor(cursorParam);
+    } catch {
+      return c.json({ error: 'Invalid cursor' }, 400);
+    }
+  }
+
+  const bindings: Array<string | number> = [];
+  let cursorClause = '';
+  if (cursor) {
+    cursorClause = 'AND (u.created_at < ? OR (u.created_at = ? AND u.id < ?))';
+    bindings.push(cursor.createdAt, cursor.createdAt, cursor.id);
+  }
+
   const result = await c.env.DB.prepare(
     `SELECT
       u.id,
       u.username,
       u.is_anonymous,
       u.is_admin,
-      u.created_at,
-      aep.email as email_password_email,
-      ao.email as oauth_email
+      u.created_at
     FROM users u
-    LEFT JOIN auth_email_password aep ON u.id = aep.user_id
-    LEFT JOIN auth_oauth ao ON u.id = ao.user_id
     WHERE u.merged_into_user_id IS NULL
-    ORDER BY u.created_at DESC
-    LIMIT 100`
-  ).all();
+      AND u.is_anonymous = 0
+      ${cursorClause}
+    ORDER BY u.created_at DESC, u.id DESC
+    LIMIT ?`
+  )
+    .bind(...bindings, limit)
+    .all();
 
-  return c.json({
-    users: result.results.map((row) => ({
+  const users = result.results as Array<{
+    id: string;
+    username: string | null;
+    is_anonymous: number;
+    is_admin: number;
+    created_at: string;
+  }>;
+
+  const userIds = users.map((row) => row.id);
+  const passwordByUser = new Map<string, { email: string; createdAt: string }>();
+  const oauthByUser = new Map<
+    string,
+    Array<{ provider: string; email: string | null; createdAt: string }>
+  >();
+
+  if (userIds.length > 0) {
+    const placeholders = userIds.map(() => '?').join(',');
+    const passwordResult = await c.env.DB.prepare(
+      `SELECT user_id, email, created_at FROM auth_email_password WHERE user_id IN (${placeholders})`
+    )
+      .bind(...userIds)
+      .all();
+
+    for (const row of passwordResult.results as Array<{
+      user_id: string;
+      email: string;
+      created_at: string;
+    }>) {
+      if (!passwordByUser.has(row.user_id)) {
+        passwordByUser.set(row.user_id, { email: row.email, createdAt: row.created_at });
+      }
+    }
+
+    const oauthResult = await c.env.DB.prepare(
+      `SELECT user_id, provider, email, created_at FROM auth_oauth WHERE user_id IN (${placeholders})`
+    )
+      .bind(...userIds)
+      .all();
+
+    for (const row of oauthResult.results as Array<{
+      user_id: string;
+      provider: string;
+      email: string | null;
+      created_at: string;
+    }>) {
+      const list = oauthByUser.get(row.user_id) ?? [];
+      list.push({ provider: row.provider, email: row.email, createdAt: row.created_at });
+      oauthByUser.set(row.user_id, list);
+    }
+  }
+
+  const usersPayload = users.map((row) => {
+    const password = passwordByUser.get(row.id);
+    const oauthProviders = oauthByUser.get(row.id) ?? [];
+    const authProviders: Array<{ provider: string; email: string | null; createdAt: string }> = [];
+
+    if (password) {
+      authProviders.push({
+        provider: 'password',
+        email: password.email,
+        createdAt: password.createdAt,
+      });
+    }
+
+    for (const provider of oauthProviders) {
+      authProviders.push({
+        provider: provider.provider,
+        email: provider.email,
+        createdAt: provider.createdAt,
+      });
+    }
+
+    const email = password?.email ?? oauthProviders[0]?.email ?? null;
+
+    return {
       id: row.id,
       username: row.username,
-      email: row.email_password_email || row.oauth_email || null,
+      email,
       isAnonymous: row.is_anonymous === 1,
       isAdmin: row.is_admin === 1,
       createdAt: row.created_at,
-    })),
+      authProviders,
+    };
   });
+
+  const lastUser = usersPayload[usersPayload.length - 1];
+  const nextCursor =
+    usersPayload.length === limit && lastUser
+      ? encodeAdminCursor(lastUser.createdAt, lastUser.id)
+      : null;
+
+  return c.json({ users: usersPayload, nextCursor });
 });
 
 app.put('/api/admin/users/:id/admin', async (c) => {
