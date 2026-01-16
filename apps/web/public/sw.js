@@ -1,4 +1,5 @@
-const CACHE_NAME = 'wotd-shell-v2';
+const CACHE_VERSION = new URL(self.location.href).searchParams.get('v') || 'v2';
+const CACHE_NAME = `wotd-shell-${CACHE_VERSION}`;
 const APP_SHELL = [
   '/',
   '/index.html',
@@ -34,6 +35,11 @@ self.addEventListener('fetch', (event) => {
     return;
   }
   const url = new URL(request.url);
+
+  if (request.mode === 'navigate' || request.destination === 'document') {
+    event.respondWith(networkFirst(request));
+    return;
+  }
 
   if (url.pathname.startsWith('/api/')) {
     event.respondWith(fetch(request));

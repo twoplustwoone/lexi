@@ -55,6 +55,8 @@ Optional
 
 - `VITE_GOOGLE_CLIENT_ID`: Google Sign-In client ID (frontend).
 
+- `VITE_BUILD_ID`: Build identifier used to bust the service worker cache (set in CI to the commit SHA).
+
 ## CI/CD (GitHub Actions)
 
 Secrets required for deploy workflows:
