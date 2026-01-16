@@ -138,6 +138,7 @@ function NavLinks() {
   );
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function NotFoundRedirect(_props: { path?: string }) {
   useEffect(() => {
     route('/', true);
