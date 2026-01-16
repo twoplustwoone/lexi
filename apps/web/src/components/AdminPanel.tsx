@@ -1,6 +1,12 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useMemo, useState } from 'preact/hooks';
 
-import { AdminUser, fetchAdminUsers, setUserAdmin } from '../api';
+import {
+  AdminNotifyResponse,
+  AdminUser,
+  fetchAdminUsers,
+  sendAdminTestNotification,
+  setUserAdmin,
+} from '../api';
 import { Button } from './Button';
 
 interface AdminPanelProps {
@@ -12,6 +18,14 @@ export function AdminPanel({ currentUserId }: AdminPanelProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [notifyLoading, setNotifyLoading] = useState(false);
+  const [notifyError, setNotifyError] = useState<string | null>(null);
+  const [notifyResult, setNotifyResult] = useState<AdminNotifyResponse | null>(null);
+  const [pushStatus, setPushStatus] = useState<{
+    supported: boolean;
+    permission: NotificationPermission | 'unsupported';
+    hasSubscription: boolean | null;
+  } | null>(null);
 
   const loadUsers = async () => {
     try {
@@ -39,6 +53,29 @@ export function AdminPanel({ currentUserId }: AdminPanelProps) {
 
   useEffect(() => {
     loadUsers();
+    const loadPushStatus = async () => {
+      if (
+        !('serviceWorker' in navigator) ||
+        !('PushManager' in window) ||
+        !('Notification' in window)
+      ) {
+        setPushStatus({ supported: false, permission: 'unsupported', hasSubscription: null });
+        return;
+      }
+      const permission = Notification.permission;
+      try {
+        const registration = await navigator.serviceWorker.ready;
+        const subscription = await registration.pushManager.getSubscription();
+        setPushStatus({
+          supported: true,
+          permission,
+          hasSubscription: Boolean(subscription),
+        });
+      } catch {
+        setPushStatus({ supported: true, permission, hasSubscription: null });
+      }
+    };
+    void loadPushStatus();
   }, []);
 
   const handleToggleAdmin = async (
@@ -97,6 +134,27 @@ export function AdminPanel({ currentUserId }: AdminPanelProps) {
     return user.id.slice(0, 8) + '...';
   };
 
+  const notifySummary = useMemo(() => {
+    if (!notifyResult) return null;
+    const total = notifyResult.results.length;
+    const okCount = notifyResult.results.filter((result) => result.ok).length;
+    return { total, okCount, failed: total - okCount };
+  }, [notifyResult]);
+
+  const handleSendTestNotification = async () => {
+    setNotifyLoading(true);
+    setNotifyError(null);
+    setNotifyResult(null);
+    try {
+      const response = await sendAdminTestNotification();
+      setNotifyResult(response);
+    } catch (err) {
+      setNotifyError(err instanceof Error ? err.message : 'Failed to send test notification.');
+    } finally {
+      setNotifyLoading(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="p-4 text-center text-muted">
@@ -118,6 +176,70 @@ export function AdminPanel({ currentUserId }: AdminPanelProps) {
 
   return (
     <div className="space-y-4">
+      <div className="rounded-2xl border border-[rgba(30,27,22,0.12)] bg-[rgba(255,252,247,0.7)] p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h4 className="text-sm font-semibold">Notifications</h4>
+            <p className="mt-1 text-xs text-muted">
+              Sends a test push to this admin account using the stored subscriptions.
+            </p>
+          </div>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={handleSendTestNotification}
+            disabled={notifyLoading}
+          >
+            {notifyLoading ? 'Sending…' : 'Send test notification'}
+          </Button>
+        </div>
+        {pushStatus ? (
+          <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted">
+            <span className="rounded-full bg-surface px-2 py-1">
+              Permission:{' '}
+              {pushStatus.permission === 'unsupported' ? 'Unsupported' : pushStatus.permission}
+            </span>
+            <span className="rounded-full bg-surface px-2 py-1">
+              Subscription:{' '}
+              {pushStatus.hasSubscription == null
+                ? 'Unknown'
+                : pushStatus.hasSubscription
+                  ? 'Present'
+                  : 'Missing'}
+            </span>
+          </div>
+        ) : null}
+        {pushStatus && pushStatus.supported && pushStatus.hasSubscription === false ? (
+          <p className="mt-2 text-xs text-muted">
+            No subscription found on this device. Enable notifications in Settings and try again.
+          </p>
+        ) : null}
+        {notifyError ? <p className="mt-3 text-sm text-[#8f2d2d]">{notifyError}</p> : null}
+        {notifyResult ? (
+          <div className="mt-3 space-y-2 text-sm">
+            <p className={notifyResult.ok ? 'text-accent-strong' : 'text-[#8f2d2d]'}>
+              {notifySummary?.okCount ?? 0}/{notifySummary?.total ?? 0} notifications delivered.
+            </p>
+            <div className="space-y-2">
+              {notifyResult.results.map((result, index) => (
+                <div
+                  key={`${result.endpointDomain}-${index}`}
+                  className="rounded-lg border border-[rgba(30,27,22,0.08)] bg-surface px-3 py-2 text-xs text-muted"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span>{result.endpointDomain}</span>
+                    <span className={result.ok ? 'text-accent-strong' : 'text-[#8f2d2d]'}>
+                      {result.status ? `HTTP ${result.status}` : 'Error'}
+                    </span>
+                  </div>
+                  {result.error ? <p className="mt-1 text-[#8f2d2d]">{result.error}</p> : null}
+                  {result.body ? <p className="mt-1">{result.body}</p> : null}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
       <div className="flex items-center justify-between">
         <h3 className="text-lg font-semibold">User Management</h3>
         <Button variant="ghost" size="sm" onClick={loadUsers}>

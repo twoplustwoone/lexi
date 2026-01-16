@@ -248,8 +248,22 @@ export async function logout(): Promise<void> {
   await apiFetch('/auth/logout', { method: 'POST' });
 }
 
-export async function sendAdminTestNotification(): Promise<void> {
-  await apiFetch('/admin/notify', { method: 'POST' });
+export interface AdminNotifyResult {
+  endpointDomain: string;
+  status: number;
+  ok: boolean;
+  body?: string;
+  error?: string;
+}
+
+export interface AdminNotifyResponse {
+  ok: boolean;
+  results: AdminNotifyResult[];
+  vapidSubject?: string;
+}
+
+export async function sendAdminTestNotification(): Promise<AdminNotifyResponse> {
+  return apiFetch('/admin/notify', { method: 'POST' });
 }
 
 export interface AdminUser {
