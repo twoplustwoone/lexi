@@ -68,10 +68,18 @@ export async function processDueSchedules(env: Env): Promise<CronStats> {
               metadata: { source: 'scheduled' },
             })
           );
-          const pushResult = await sendPushNotificationsForUser(env, schedule.user_id);
-          totalPushSent += pushResult.sent;
-          totalPushFailed += pushResult.failed;
+        } else {
+          await logInfo(
+            env,
+            'cron',
+            'Word already delivered for schedule; sending notification anyway',
+            { userId: schedule.user_id, wordId, dateKey },
+            schedule.user_id
+          );
         }
+        const pushResult = await sendPushNotificationsForUser(env, schedule.user_id);
+        totalPushSent += pushResult.sent;
+        totalPushFailed += pushResult.failed;
 
         const nextDelivery = computeNextDelivery(schedule.timezone, schedule.delivery_time);
         const updateTime = DateTime.utc().toISO();
