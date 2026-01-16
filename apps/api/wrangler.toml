@@ -50,3 +50,8 @@ migrations_dir = "migrations"
 [[env.production.kv_namespaces]]
 binding = "KV"
 id = "09c68a2322be4cab9ef0dc751895ab7f"
+
+[observability]
+[observability.logs]
+enabled = true
+invocation_logs = true
