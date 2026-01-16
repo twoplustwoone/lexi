@@ -37,6 +37,7 @@ SESSION_TTL_DAYS = "30"
 SESSION_COOKIE_SAMESITE = "Lax"
 COOKIE_SECURE = "true"
 VAPID_SUBJECT = "mailto:francisco@twoplustwoone.dev"
+NOTIFICATION_SAME_DAY_DELIVERY = "true"
 
 [env.production.triggers]
 crons = ["*/15 * * * *"]
@@ -55,3 +56,6 @@ id = "09c68a2322be4cab9ef0dc751895ab7f"
 [observability.logs]
 enabled = true
 invocation_logs = true
+
+[observability.traces]
+enabled = true
