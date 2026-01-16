@@ -36,7 +36,7 @@ import {
   updateUserTimezone,
   upsertNotificationSchedule,
 } from './db';
-import { LogCategory, LogLevel, queryLogs } from './notifications/logger';
+import { logInfo, logWarn, LogCategory, LogLevel, queryLogs } from './notifications/logger';
 import { sendWebPushNotification } from './notifications/push';
 import { processDueSchedules } from './notifications/scheduler';
 import { base64UrlDecode } from './utils/base64';
@@ -242,6 +242,18 @@ app.get('/api/settings', async (c) => {
       nextDeliveryAt,
     });
     schedule = await getNotificationSchedule(c.env, userId);
+    await logInfo(
+      c.env,
+      'subscription',
+      'Initialized notification schedule',
+      {
+        enabled: false,
+        delivery_time: DEFAULT_PREFERENCES.delivery_time,
+        timezone: user.timezone,
+        next_delivery_at: nextDeliveryAt,
+      },
+      userId
+    );
   }
   let preferences = DEFAULT_PREFERENCES;
   try {
@@ -298,6 +310,18 @@ app.put('/api/settings', async (c) => {
     enabled: parsed.enabled,
     nextDeliveryAt,
   });
+  await logInfo(
+    c.env,
+    'subscription',
+    'Updated notification schedule',
+    {
+      enabled: parsed.enabled,
+      delivery_time: parsed.delivery_time,
+      timezone: parsed.timezone,
+      next_delivery_at: nextDeliveryAt,
+    },
+    userId
+  );
 
   if (!parsed.enabled) {
     await recordEvent(c.env, buildServerEvent({ name: 'notification_disabled', userId }));
@@ -309,6 +333,7 @@ app.put('/api/settings', async (c) => {
 app.get('/api/notifications/vapid', (c) => {
   const publicKey = c.env.VAPID_PUBLIC_KEY;
   if (!publicKey || publicKey.startsWith('replace-')) {
+    void logWarn(c.env, 'vapid', 'VAPID public key not configured');
     return c.json({ error: 'VAPID public key not configured' }, 503);
   }
   return c.json({ publicKey });
@@ -336,6 +361,17 @@ app.post('/api/notifications/subscribe', async (c) => {
     )
     .run();
 
+  await logInfo(
+    c.env,
+    'subscription',
+    'Stored push subscription',
+    {
+      endpointDomain: new URL(parsed.endpoint).host,
+      expirationTime: parsed.expirationTime ?? null,
+    },
+    userId
+  );
+
   return c.json({ ok: true });
 });
 
@@ -349,6 +385,13 @@ app.post('/api/notifications/unsubscribe', async (c) => {
   await c.env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint = ? AND user_id = ?')
     .bind(parsed.endpoint, userId)
     .run();
+  await logInfo(
+    c.env,
+    'subscription',
+    'Removed push subscription',
+    { endpointDomain: new URL(parsed.endpoint).host },
+    userId
+  );
   return c.json({ ok: true });
 });
 
