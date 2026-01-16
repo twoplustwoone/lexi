@@ -1002,8 +1002,7 @@ app.get('/api/admin/users', async (c) => {
       u.is_admin,
       u.created_at
     FROM users u
-    WHERE u.merged_into_user_id IS NULL
-      AND u.is_anonymous = 0
+    WHERE u.is_anonymous = 0
       ${cursorClause}
     ORDER BY u.created_at DESC, u.id DESC
     LIMIT ?`

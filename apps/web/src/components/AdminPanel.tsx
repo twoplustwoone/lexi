@@ -11,40 +11,29 @@ export function AdminPanel({ currentUserId }: AdminPanelProps) {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [loadingMore, setLoadingMore] = useState(false);
 
   const loadUsers = async () => {
     try {
       setLoading(true);
       setError(null);
-      setLoadMoreError(null);
-      const response = await fetchAdminUsers();
-      setUsers(response.users);
-      setNextCursor(response.nextCursor);
+      const allUsers: AdminUser[] = [];
+      let cursor: string | null | undefined = undefined;
+      let pageCount = 0;
+      do {
+        const response = await fetchAdminUsers(cursor, 200);
+        allUsers.push(...response.users);
+        cursor = response.nextCursor;
+        pageCount += 1;
+        if (!response.users.length) {
+          break;
+        }
+      } while (cursor && pageCount < 100);
+      setUsers(allUsers);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load users');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const loadMoreUsers = async () => {
-    if (!nextCursor || loadingMore) {
-      return;
-    }
-    try {
-      setLoadingMore(true);
-      setLoadMoreError(null);
-      const response = await fetchAdminUsers(nextCursor);
-      setUsers((prev) => [...prev, ...response.users]);
-      setNextCursor(response.nextCursor);
-    } catch (err) {
-      setLoadMoreError(err instanceof Error ? err.message : 'Failed to load more users');
-    } finally {
-      setLoadingMore(false);
     }
   };
 
@@ -174,16 +163,6 @@ export function AdminPanel({ currentUserId }: AdminPanelProps) {
               </li>
             ))}
           </ul>
-        </div>
-      )}
-
-      {loadMoreError && <p className="text-xs text-red-600">{loadMoreError}</p>}
-
-      {nextCursor && (
-        <div className="flex justify-center">
-          <Button variant="secondary" size="sm" disabled={loadingMore} onClick={loadMoreUsers}>
-            {loadingMore ? 'Loading...' : 'Load more'}
-          </Button>
         </div>
       )}
 
