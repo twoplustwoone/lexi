@@ -1002,7 +1002,12 @@ app.get('/api/admin/users', async (c) => {
       u.is_admin,
       u.created_at
     FROM users u
-    WHERE u.is_anonymous = 0
+    WHERE (
+      u.is_anonymous = 0
+      OR EXISTS (SELECT 1 FROM auth_email_password ap WHERE ap.user_id = u.id)
+      OR EXISTS (SELECT 1 FROM auth_oauth ao WHERE ao.user_id = u.id)
+      OR EXISTS (SELECT 1 FROM auth_phone apn WHERE apn.user_id = u.id)
+    )
       ${cursorClause}
     ORDER BY u.created_at DESC, u.id DESC
     LIMIT ?`
