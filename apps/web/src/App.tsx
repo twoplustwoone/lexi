@@ -385,7 +385,7 @@ export function App() {
             <History path="/history" user={user} />
             <Settings path="/settings" user={user} />
             <AdminRoute path="/admin" user={user} onOpenAuth={openAuth} onUserChange={setUser} />
-            <NotFoundRedirect default />
+            <NotFoundRedirect />
           </PreactRouter>
         )}
       </main>
