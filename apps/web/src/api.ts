@@ -236,3 +236,24 @@ export async function logout(): Promise<void> {
 export async function sendAdminTestNotification(): Promise<void> {
   await apiFetch('/admin/notify', { method: 'POST' });
 }
+
+export interface AdminUser {
+  id: string;
+  username: string | null;
+  email: string | null;
+  isAnonymous: boolean;
+  isAdmin: boolean;
+  createdAt: string;
+}
+
+export async function fetchAdminUsers(): Promise<AdminUser[]> {
+  const response = await apiFetch<{ users: AdminUser[] }>('/admin/users');
+  return response.users;
+}
+
+export async function setUserAdmin(userId: string, isAdmin: boolean): Promise<void> {
+  await apiFetch(`/admin/users/${userId}/admin`, {
+    method: 'PUT',
+    body: JSON.stringify({ isAdmin }),
+  });
+}

@@ -906,6 +906,80 @@ app.get('/api/admin/subscriptions', async (c) => {
   });
 });
 
+app.get('/api/admin/users', async (c) => {
+  const cookies = parseCookies(c.req.header('cookie') ?? null);
+  const token = cookies.session ?? null;
+  const userId = await getSessionUserId(c.env, token);
+  if (!userId) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const user = await getUserById(c.env, userId);
+  if (!user || user.is_admin !== 1) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+
+  const result = await c.env.DB.prepare(
+    `SELECT
+      u.id,
+      u.username,
+      u.is_anonymous,
+      u.is_admin,
+      u.created_at,
+      aep.email as email_password_email,
+      ao.email as oauth_email
+    FROM users u
+    LEFT JOIN auth_email_password aep ON u.id = aep.user_id
+    LEFT JOIN auth_oauth ao ON u.id = ao.user_id
+    WHERE u.merged_into_user_id IS NULL
+    ORDER BY u.created_at DESC
+    LIMIT 100`
+  ).all();
+
+  return c.json({
+    users: result.results.map((row) => ({
+      id: row.id,
+      username: row.username,
+      email: row.email_password_email || row.oauth_email || null,
+      isAnonymous: row.is_anonymous === 1,
+      isAdmin: row.is_admin === 1,
+      createdAt: row.created_at,
+    })),
+  });
+});
+
+app.put('/api/admin/users/:id/admin', async (c) => {
+  const cookies = parseCookies(c.req.header('cookie') ?? null);
+  const token = cookies.session ?? null;
+  const userId = await getSessionUserId(c.env, token);
+  if (!userId) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const user = await getUserById(c.env, userId);
+  if (!user || user.is_admin !== 1) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+
+  const targetUserId = c.req.param('id');
+  const body = await c.req.json();
+  const parsed = z.object({ isAdmin: z.boolean() }).parse(body);
+
+  // Prevent removing your own admin status
+  if (targetUserId === userId && !parsed.isAdmin) {
+    return c.json({ error: 'Cannot remove your own admin status' }, 400);
+  }
+
+  const targetUser = await getUserById(c.env, targetUserId);
+  if (!targetUser) {
+    return c.json({ error: 'User not found' }, 404);
+  }
+
+  await c.env.DB.prepare('UPDATE users SET is_admin = ? WHERE id = ?')
+    .bind(parsed.isAdmin ? 1 : 0, targetUserId)
+    .run();
+
+  return c.json({ ok: true, isAdmin: parsed.isAdmin });
+});
+
 app.get('/api/word/:id', async (c) => {
   const id = Number(c.req.param('id'));
   if (Number.isNaN(id)) {

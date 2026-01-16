@@ -1,6 +1,7 @@
 import { useState } from 'preact/hooks';
 
 import { fetchMe, logout, sendAdminTestNotification } from '../api';
+import { AdminPanel } from '../components/AdminPanel';
 import { Button } from '../components/Button';
 import { getAnonymousId } from '../identity';
 
@@ -94,6 +95,13 @@ export function Account({ user, onOpenAuth, onUserChange }: AccountProps) {
           <Button className="mt-4" onClick={onOpenAuth}>
             Open sign-in
           </Button>
+        </div>
+      ) : null}
+
+      {user.isAuthenticated && user.isAdmin ? (
+        <div className={`${cardBase} p-6`}>
+          <h2 className="mb-4 font-[var(--font-display)] text-2xl">Admin Panel</h2>
+          <AdminPanel currentUserId={user.userId} />
         </div>
       ) : null}
     </section>
