@@ -98,12 +98,28 @@ INSERT INTO users (id, created_at, is_anonymous, timezone, preferences_json, use
 SELECT (SELECT user_id FROM resolved_user), '${now}', 0, 'UTC', '${preferencesEscaped}', '${usernameEscaped}', 1
 WHERE NOT EXISTS (SELECT 1 FROM users WHERE id = (SELECT user_id FROM resolved_user));
 
+WITH candidate_users AS (
+  SELECT id AS user_id, 1 AS priority FROM users WHERE username = '${usernameEscaped}'
+  UNION ALL
+  SELECT user_id, 2 AS priority FROM auth_email_password WHERE email = '${usernameEscaped}'
+),
+resolved_user AS (
+  SELECT COALESCE((SELECT user_id FROM candidate_users ORDER BY priority LIMIT 1), '${userId}') AS user_id
+)
 UPDATE users
 SET is_admin = 1,
     is_anonymous = 0,
     username = '${usernameEscaped}'
 WHERE id = (SELECT user_id FROM resolved_user);
 
+WITH candidate_users AS (
+  SELECT id AS user_id, 1 AS priority FROM users WHERE username = '${usernameEscaped}'
+  UNION ALL
+  SELECT user_id, 2 AS priority FROM auth_email_password WHERE email = '${usernameEscaped}'
+),
+resolved_user AS (
+  SELECT COALESCE((SELECT user_id FROM candidate_users ORDER BY priority LIMIT 1), '${userId}') AS user_id
+)
 INSERT OR REPLACE INTO auth_email_password (user_id, email, password_hash, created_at, password_set)
 VALUES ((SELECT user_id FROM resolved_user), '${usernameEscaped}', '${passwordEscaped}', '${now}', 1);
 `
