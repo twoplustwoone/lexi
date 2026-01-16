@@ -138,7 +138,7 @@ function NavLinks() {
   );
 }
 
-function NotFoundRedirect() {
+function NotFoundRedirect(_props: { path?: string }) {
   useEffect(() => {
     route('/', true);
   }, []);
@@ -385,7 +385,7 @@ export function App() {
             <History path="/history" user={user} />
             <Settings path="/settings" user={user} />
             <AdminRoute path="/admin" user={user} onOpenAuth={openAuth} onUserChange={setUser} />
-            <NotFoundRedirect />
+            <NotFoundRedirect path="/:rest*" />
           </PreactRouter>
         )}
       </main>
