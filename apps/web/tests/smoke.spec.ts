@@ -191,9 +191,7 @@ test('shows admin actions when authenticated as admin', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Send test notification' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Sign in' })).toHaveCount(0);
 
-  const requestPromise = page.waitForRequest((req) =>
-    req.url().endsWith('/api/admin/notify')
-  );
+  const requestPromise = page.waitForRequest((req) => req.url().endsWith('/api/admin/notify'));
   await page.getByRole('button', { name: 'Send test notification' }).click();
   await requestPromise;
 });

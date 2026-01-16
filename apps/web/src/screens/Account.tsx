@@ -51,7 +51,6 @@ export function Account({ user, onOpenAuth, onUserChange }: AccountProps) {
     setStatus('Signed out.');
   };
 
-
   const cardBase =
     'rounded-[20px] border border-[rgba(30,27,22,0.12)] bg-card shadow-[0_18px_40px_rgba(29,25,18,0.12)] animate-[fade-up_0.5s_ease_both] motion-reduce:animate-none';
 

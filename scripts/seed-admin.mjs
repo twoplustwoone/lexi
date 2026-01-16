@@ -141,12 +141,18 @@ writeFileSync(tempPath, sql);
 const wrangler = getWranglerCommand();
 
 try {
-  execSync(`${wrangler} d1 migrations apply word_of_the_day ${modeFlag} ${envFlag} --cwd apps/api`, {
-    stdio: 'inherit',
-  });
-  execSync(`${wrangler} d1 execute word_of_the_day --file ${tempPath} ${modeFlag} ${envFlag} --cwd apps/api`, {
-    stdio: 'inherit',
-  });
+  execSync(
+    `${wrangler} d1 migrations apply word_of_the_day ${modeFlag} ${envFlag} --cwd apps/api`,
+    {
+      stdio: 'inherit',
+    }
+  );
+  execSync(
+    `${wrangler} d1 execute word_of_the_day --file ${tempPath} ${modeFlag} ${envFlag} --cwd apps/api`,
+    {
+      stdio: 'inherit',
+    }
+  );
 } finally {
   unlinkSync(tempPath);
 }
