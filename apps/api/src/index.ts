@@ -36,8 +36,10 @@ import {
   updateUserTimezone,
   upsertNotificationSchedule,
 } from './db';
+import { LogCategory, LogLevel, queryLogs } from './notifications/logger';
 import { sendWebPushNotification } from './notifications/push';
 import { processDueSchedules } from './notifications/scheduler';
+import { base64UrlDecode } from './utils/base64';
 import { hashCode, hashPassword, verifyPassword } from './utils/crypto';
 import { ensureDailyWordForUser, getWordById } from './words';
 
@@ -709,9 +711,17 @@ app.post('/api/admin/notify', async (c) => {
     timezone: user.timezone,
   });
 
-  // Send push notifications directly (no queue)
-  const statuses: number[] = [];
+  // Send push notifications directly with detailed response
+  const results: Array<{
+    endpointDomain: string;
+    status: number;
+    ok: boolean;
+    body?: string;
+    error?: string;
+  }> = [];
+
   for (const sub of subscriptions.results as Array<{ endpoint: string }>) {
+    const endpointDomain = new URL(sub.endpoint).host;
     try {
       const response = await sendWebPushNotification({
         endpoint: sub.endpoint,
@@ -719,17 +729,181 @@ app.post('/api/admin/notify', async (c) => {
         privateKey: c.env.VAPID_PRIVATE_KEY,
         subject: c.env.VAPID_SUBJECT,
       });
-      statuses.push(response.status);
+
+      const body = await response.text().catch(() => null);
+
+      results.push({
+        endpointDomain,
+        status: response.status,
+        ok: response.ok,
+        body: body?.slice(0, 500) ?? undefined,
+      });
+
       if (response.status === 404 || response.status === 410) {
         await c.env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?')
           .bind(sub.endpoint)
           .run();
       }
-    } catch {
-      statuses.push(0);
+    } catch (error) {
+      results.push({
+        endpointDomain,
+        status: 0,
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
-  return c.json({ ok: true, statuses });
+
+  return c.json({
+    ok: results.some((r) => r.ok),
+    results,
+    vapidSubject: c.env.VAPID_SUBJECT,
+  });
+});
+
+app.get('/api/admin/logs', async (c) => {
+  const cookies = parseCookies(c.req.header('cookie') ?? null);
+  const token = cookies.session ?? null;
+  const userId = await getSessionUserId(c.env, token);
+  if (!userId) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const user = await getUserById(c.env, userId);
+  if (!user || user.is_admin !== 1) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+
+  const category = c.req.query('category') as LogCategory | undefined;
+  const level = c.req.query('level') as LogLevel | undefined;
+  const filterUserId = c.req.query('user_id');
+  const limit = Math.min(Number(c.req.query('limit')) || 100, 500);
+  const offset = Number(c.req.query('offset')) || 0;
+
+  const logs = await queryLogs(c.env, {
+    category,
+    level,
+    userId: filterUserId,
+    limit,
+    offset,
+  });
+
+  return c.json({
+    logs: logs.map((log) => ({
+      ...log,
+      metadata: log.metadata_json ? JSON.parse(log.metadata_json) : null,
+    })),
+  });
+});
+
+app.get('/api/admin/cron-status', async (c) => {
+  const cookies = parseCookies(c.req.header('cookie') ?? null);
+  const token = cookies.session ?? null;
+  const userId = await getSessionUserId(c.env, token);
+  if (!userId) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const user = await getUserById(c.env, userId);
+  if (!user || user.is_admin !== 1) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+
+  const lastRun = await c.env.KV.get('cron:last_run');
+  const runCount = await c.env.KV.get('cron:run_count');
+
+  return c.json({
+    lastRun,
+    runCount: runCount ? Number(runCount) : 0,
+    currentTime: DateTime.utc().toISO(),
+  });
+});
+
+app.get('/api/admin/vapid-check', async (c) => {
+  const cookies = parseCookies(c.req.header('cookie') ?? null);
+  const token = cookies.session ?? null;
+  const userId = await getSessionUserId(c.env, token);
+  if (!userId) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const user = await getUserById(c.env, userId);
+  if (!user || user.is_admin !== 1) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+
+  const publicKey = c.env.VAPID_PUBLIC_KEY;
+  const privateKey = c.env.VAPID_PRIVATE_KEY;
+  const subject = c.env.VAPID_SUBJECT;
+
+  const checks: Record<string, unknown> = {
+    publicKeyLength: publicKey?.length ?? 0,
+    privateKeyLength: privateKey?.length ?? 0,
+    publicKeyPrefix: publicKey?.substring(0, 10) ?? null,
+    subject,
+    isPlaceholder:
+      publicKey?.startsWith('replace-') ||
+      privateKey?.startsWith('replace-') ||
+      !publicKey ||
+      !privateKey,
+  };
+
+  // Validate public key can be decoded
+  if (publicKey && !publicKey.startsWith('replace-')) {
+    try {
+      const decoded = base64UrlDecode(publicKey);
+      checks.publicKeyDecodedLength = decoded.length;
+      checks.publicKeyFirstByte = decoded[0];
+      checks.isValidUncompressedPoint = decoded.length === 65 && decoded[0] === 0x04;
+    } catch (e) {
+      checks.publicKeyDecodeError = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  // Validate private key can be decoded
+  if (privateKey && !privateKey.startsWith('replace-')) {
+    try {
+      const decoded = base64UrlDecode(privateKey);
+      checks.privateKeyDecodedLength = decoded.length;
+      checks.isValidPrivateKeyLength = decoded.length === 32;
+    } catch (e) {
+      checks.privateKeyDecodeError = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  return c.json(checks);
+});
+
+app.get('/api/admin/subscriptions', async (c) => {
+  const cookies = parseCookies(c.req.header('cookie') ?? null);
+  const token = cookies.session ?? null;
+  const userId = await getSessionUserId(c.env, token);
+  if (!userId) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const user = await getUserById(c.env, userId);
+  if (!user || user.is_admin !== 1) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+
+  const result = await c.env.DB.prepare(
+    `SELECT
+      ps.user_id,
+      ps.endpoint,
+      ps.created_at as subscription_created,
+      ns.enabled,
+      ns.delivery_time,
+      ns.timezone,
+      ns.next_delivery_at
+    FROM push_subscriptions ps
+    LEFT JOIN notification_schedules ns ON ps.user_id = ns.user_id
+    ORDER BY ps.created_at DESC
+    LIMIT 100`
+  ).all();
+
+  return c.json({
+    subscriptions: result.results.map((row) => ({
+      ...row,
+      endpointDomain: new URL(row.endpoint as string).host,
+    })),
+  });
 });
 
 app.get('/api/word/:id', async (c) => {
@@ -751,6 +925,11 @@ app.onError((err, c) => {
 export default {
   fetch: app.fetch,
   scheduled: async (_event: ScheduledEvent, env: Env, ctx: ExecutionContext) => {
+    // Record cron heartbeat for monitoring
+    await env.KV.put('cron:last_run', new Date().toISOString());
+    const runCount = Number((await env.KV.get('cron:run_count')) || 0) + 1;
+    await env.KV.put('cron:run_count', String(runCount));
+
     ctx.waitUntil(processDueSchedules(env));
   },
 };
