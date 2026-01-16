@@ -50,6 +50,14 @@ function escapeSql(value) {
   return value.replace(/'/g, "''");
 }
 
+function isTruthyEnv(value) {
+  if (!value) {
+    return false;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
+}
+
 loadEnvFromDevVars();
 
 const args = process.argv.slice(2);
@@ -63,6 +71,7 @@ const envFlag = envValue ? `--env ${envValue}` : '';
 
 const username = process.env.ADMIN_USERNAME;
 const password = process.env.ADMIN_PASSWORD;
+const forceSeed = isTruthyEnv(process.env.ADMIN_FORCE_SEED);
 if (!username || !password) {
   console.log('Skipping admin seed: ADMIN_USERNAME or ADMIN_PASSWORD not set.');
   process.exit(0);
@@ -75,7 +84,30 @@ const usernameEscaped = escapeSql(username);
 const passwordEscaped = escapeSql(passwordHash);
 const preferencesEscaped = escapeSql(JSON.stringify(DEFAULT_PREFERENCES));
 
-const sql = `
+const sql = forceSeed
+  ? `
+WITH candidate_users AS (
+  SELECT id AS user_id, 1 AS priority FROM users WHERE username = '${usernameEscaped}'
+  UNION ALL
+  SELECT user_id, 2 AS priority FROM auth_email_password WHERE email = '${usernameEscaped}'
+),
+resolved_user AS (
+  SELECT COALESCE((SELECT user_id FROM candidate_users ORDER BY priority LIMIT 1), '${userId}') AS user_id
+)
+INSERT INTO users (id, created_at, is_anonymous, timezone, preferences_json, username, is_admin)
+SELECT (SELECT user_id FROM resolved_user), '${now}', 0, 'UTC', '${preferencesEscaped}', '${usernameEscaped}', 1
+WHERE NOT EXISTS (SELECT 1 FROM users WHERE id = (SELECT user_id FROM resolved_user));
+
+UPDATE users
+SET is_admin = 1,
+    is_anonymous = 0,
+    username = '${usernameEscaped}'
+WHERE id = (SELECT user_id FROM resolved_user);
+
+INSERT OR REPLACE INTO auth_email_password (user_id, email, password_hash, created_at, password_set)
+VALUES ((SELECT user_id FROM resolved_user), '${usernameEscaped}', '${passwordEscaped}', '${now}', 1);
+`
+  : `
 INSERT INTO users (id, created_at, is_anonymous, timezone, preferences_json, username, is_admin)
 SELECT '${userId}', '${now}', 0, 'UTC', '${preferencesEscaped}', '${usernameEscaped}', 1
 WHERE NOT EXISTS (SELECT 1 FROM users WHERE username = '${usernameEscaped}')

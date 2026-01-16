@@ -10,3 +10,4 @@ TWILIO_AUTH_TOKEN=your-twilio-auth-token
 TWILIO_FROM=+15555555555
 ADMIN_USERNAME=admin@example.com
 ADMIN_PASSWORD=replace-with-strong-password
+ADMIN_FORCE_SEED=false

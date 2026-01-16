@@ -57,7 +57,7 @@ Local dev admin seeding uses `ADMIN_USERNAME` and `ADMIN_PASSWORD` from `apps/ap
 - `npm run seed:admin` (local)
 - `npm run seed:admin -- --remote` (remote, used in deploy workflow)
 
-If the admin user already exists, the seed script skips creation.
+If the admin user already exists, the seed script skips creation unless `ADMIN_FORCE_SEED` is set to a truthy value to recreate/update the admin credentials.
 
 Admin accounts see a "Send test notification" button in the Account screen.
 Admin logins accept the username you seeded (or the email address for standard accounts).
@@ -85,7 +85,7 @@ Admin logins accept the username you seeded (or the email address for standard a
 3. Deploy:
    - `wrangler deploy --cwd apps/api`
 
-Admin seeding runs during CI/CD deploys if `ADMIN_USERNAME` and `ADMIN_PASSWORD` are set.
+Admin seeding runs during CI/CD deploys if `ADMIN_USERNAME` and `ADMIN_PASSWORD` are set. Add `ADMIN_FORCE_SEED=true` in GitHub secrets to force a recreate/update.
 
 ### Cloudflare Pages (Web)
 

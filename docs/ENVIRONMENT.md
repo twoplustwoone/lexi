@@ -34,6 +34,7 @@ Admin seeding (optional)
 
 - `ADMIN_USERNAME`: Admin username for seed script.
 - `ADMIN_PASSWORD`: Admin password for seed script.
+- `ADMIN_FORCE_SEED`: Set to a truthy value to recreate/update the admin account during seeding.
 
 Local dev file
 
@@ -62,3 +63,4 @@ Optional deploy-time admin seed:
 
 - `ADMIN_USERNAME`
 - `ADMIN_PASSWORD`
+- `ADMIN_FORCE_SEED`

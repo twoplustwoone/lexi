@@ -38,6 +38,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           ADMIN_USERNAME: ${{ secrets.ADMIN_USERNAME }}
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          ADMIN_FORCE_SEED: ${{ secrets.ADMIN_FORCE_SEED }}
         run: npm run seed:admin -- --remote --env production
 
   deploy-web:
