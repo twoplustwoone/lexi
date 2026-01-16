@@ -284,8 +284,11 @@ app.put('/api/settings', async (c) => {
   };
   await updateUserPreferences(c.env, userId, updatedPreferences);
 
+  const sameDayDelivery = c.env.NOTIFICATION_SAME_DAY_DELIVERY === 'true';
   const nextDeliveryAt = parsed.enabled
-    ? computeNextDeliveryFromTomorrow(parsed.timezone, parsed.delivery_time)
+    ? sameDayDelivery
+      ? computeInitialDelivery(parsed.timezone, parsed.delivery_time)
+      : computeNextDeliveryFromTomorrow(parsed.timezone, parsed.delivery_time)
     : computeInitialDelivery(parsed.timezone, parsed.delivery_time);
 
   await upsertNotificationSchedule(c.env, {

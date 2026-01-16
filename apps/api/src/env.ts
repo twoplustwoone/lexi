@@ -7,6 +7,7 @@ export interface Env {
   SESSION_SECRET: string;
   SESSION_COOKIE_SAMESITE: string;
   COOKIE_SECURE: string;
+  NOTIFICATION_SAME_DAY_DELIVERY?: string;
   VAPID_PUBLIC_KEY: string;
   VAPID_PRIVATE_KEY: string;
   VAPID_SUBJECT: string;

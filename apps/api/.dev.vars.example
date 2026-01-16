@@ -1,4 +1,5 @@
 SESSION_SECRET=replace-with-strong-secret
+NOTIFICATION_SAME_DAY_DELIVERY=false
 VAPID_PUBLIC_KEY=replace-with-public-key
 VAPID_PRIVATE_KEY=replace-with-private-key
 VAPID_SUBJECT=mailto:hello@example.com

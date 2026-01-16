@@ -21,6 +21,10 @@ Required config
 - `VAPID_SUBJECT`: Contact URI, e.g. `mailto:hello@example.com`.
 - `VAPID_PUBLIC_KEY`: Web Push VAPID public key (base64url).
 
+Optional behavior
+
+- `NOTIFICATION_SAME_DAY_DELIVERY`: Set to `true` to allow same-day delivery when enabling notifications before the scheduled time.
+
 Optional integrations (enable when used)
 
 - `GOOGLE_CLIENT_ID`: Google Sign-In client ID.
