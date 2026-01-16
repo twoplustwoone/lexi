@@ -972,8 +972,7 @@ app.get('/api/admin/users', async (c) => {
 
   const url = new URL(c.req.url);
   const limitParam = Number.parseInt(url.searchParams.get('limit') ?? '', 10);
-  const limit =
-    Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, 200) : 50;
+  const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, 200) : 50;
 
   const cursorParam = url.searchParams.get('cursor');
   let cursor: { createdAt: string; id: string } | null = null;
