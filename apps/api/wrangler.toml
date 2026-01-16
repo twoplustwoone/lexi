@@ -1,7 +1,7 @@
 name = "word-of-the-day-api"
 main = "src/index.ts"
 compatibility_date = "2024-07-25"
-nodejs_compat = true
+compatibility_flags = ["nodejs_compat"]
 
 [vars]
 APP_ENV = "development"
