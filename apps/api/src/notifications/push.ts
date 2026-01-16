@@ -17,7 +17,7 @@ export async function sendWebPushNotification(params: {
     method: 'POST',
     headers: {
       TTL: '86400',
-      Authorization: `vapid t=${jwt}, k=${params.publicKey}`,
+      Authorization: `WebPush ${jwt}`,
       'Crypto-Key': `p256ecdsa=${params.publicKey}`,
       'Content-Length': '0',
     },
