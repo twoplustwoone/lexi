@@ -71,11 +71,10 @@ describe('Push Integration', () => {
     const auth = request?.headers.authorization as string;
 
     expect(auth).toBeDefined();
-    expect(auth).toMatch(/^vapid t=.+, k=.+$/);
+    expect(auth).toMatch(/^WebPush\s+\S+$/);
 
-    // Verify the key portion matches our public key
-    const keyMatch = auth.match(/k=(.+)$/);
-    expect(keyMatch?.[1]).toBe(testKeys.publicKey);
+    const jwt = auth.replace(/^WebPush\s+/, '');
+    expect(jwt.split('.')).toHaveLength(3);
   });
 
   it('includes Crypto-Key header', async () => {
@@ -183,11 +182,7 @@ describe('Push Integration', () => {
     const request = mockServer.getLastRequest();
     const auth = request?.headers.authorization as string;
 
-    // Extract JWT from "vapid t=<jwt>, k=<key>"
-    const jwtMatch = auth.match(/t=([^,]+)/);
-    expect(jwtMatch).toBeDefined();
-
-    const jwt = jwtMatch![1];
+    const jwt = auth.replace(/^WebPush\s+/, '');
     const parts = jwt.split('.');
     expect(parts).toHaveLength(3);
 
