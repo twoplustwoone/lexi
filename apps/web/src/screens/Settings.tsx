@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
 
+import { isThirtyMinuteTime } from '@word-of-the-day/shared';
+
 import {
   fetchVapidKey,
   getClientType,
@@ -60,6 +62,13 @@ export function Settings({ user }: SettingsProps) {
     'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
   const getErrorMessage = (error: unknown, fallback: string) =>
     error instanceof Error ? error.message : fallback;
+  const validateDeliveryTime = () => {
+    if (isThirtyMinuteTime(deliveryTime)) {
+      return true;
+    }
+    setMessage('Delivery time must be in 30-minute increments.');
+    return false;
+  };
 
   useEffect(() => {
     const hasCachedSettings = cachedSettings !== null;
@@ -86,6 +95,9 @@ export function Settings({ user }: SettingsProps) {
     setMessage(null);
     if (!supportsPush && nextEnabled) {
       setMessage('Push notifications are not supported on this device.');
+      return;
+    }
+    if (!validateDeliveryTime()) {
       return;
     }
 
@@ -150,6 +162,8 @@ export function Settings({ user }: SettingsProps) {
       setEnabled(updated.schedule.enabled);
       setDeliveryTime(updated.schedule.delivery_time);
       setTimezone(updated.schedule.timezone);
+    } catch (error: unknown) {
+      setMessage(getErrorMessage(error, 'Unable to update notification settings.'));
     } finally {
       setIsToggling(false);
     }
@@ -158,6 +172,9 @@ export function Settings({ user }: SettingsProps) {
   const handleSave = async (event: Event) => {
     event.preventDefault();
     setMessage(null);
+    if (!validateDeliveryTime()) {
+      return;
+    }
     setIsSaving(true);
     try {
       await updateSettingsRemote({ enabled, delivery_time: deliveryTime, timezone });
@@ -167,6 +184,8 @@ export function Settings({ user }: SettingsProps) {
       setDeliveryTime(updated.schedule.delivery_time);
       setTimezone(updated.schedule.timezone);
       setMessage('Saved. Changes apply next day.');
+    } catch (error: unknown) {
+      setMessage(getErrorMessage(error, 'Unable to save settings.'));
     } finally {
       setIsSaving(false);
     }
@@ -215,7 +234,9 @@ export function Settings({ user }: SettingsProps) {
             className="rounded-xl border border-[rgba(30,27,22,0.12)] bg-white px-3 py-2 text-sm focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
             value={deliveryTime}
             onChange={(event) => setDeliveryTime(event.currentTarget.value)}
+            step={1800}
           />
+          <p className="text-xs text-muted">Times are available every 30 minutes.</p>
         </label>
 
         <label className="mt-4 flex flex-col gap-1 text-sm">

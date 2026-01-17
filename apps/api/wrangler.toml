@@ -12,7 +12,7 @@ COOKIE_SECURE = "false"
 VAPID_SUBJECT = "mailto:hello@example.com"
 
 [triggers]
-crons = ["* * * * *"]
+crons = ["*/30 * * * *"]
 
 [[d1_databases]]
 binding = "DB"
@@ -40,7 +40,7 @@ VAPID_SUBJECT = "mailto:francisco@twoplustwoone.dev"
 NOTIFICATION_SAME_DAY_DELIVERY = "true"
 
 [env.production.triggers]
-crons = ["* * * * *"]
+crons = ["*/30 * * * *"]
 
 [[env.production.d1_databases]]
 binding = "DB"

@@ -6,6 +6,15 @@ export const timeStringSchema = z
   .string()
   .regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Invalid time format (HH:mm)');
 
+export function isThirtyMinuteTime(value: string): boolean {
+  const minute = Number(value.split(':')[1]);
+  return Number.isFinite(minute) && minute % 30 === 0;
+}
+
+export const timeThirtyMinuteSchema = timeStringSchema.refine(isThirtyMinuteTime, {
+  message: 'Time must be in 30-minute increments',
+});
+
 export function isValidTimeZone(timeZone: string): boolean {
   try {
     Intl.DateTimeFormat('en-US', { timeZone }).format();
@@ -49,7 +58,7 @@ export const eventSchema = z.object({
 
 export const deliverySettingsSchema = z.object({
   enabled: z.boolean(),
-  delivery_time: timeStringSchema,
+  delivery_time: timeThirtyMinuteSchema,
   timezone: timeZoneSchema,
 });
 
