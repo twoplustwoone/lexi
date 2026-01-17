@@ -46,6 +46,16 @@ import { ensureDailyWordForUser, getWordById } from './words';
 const app = new Hono<{ Bindings: Env }>();
 
 app.onError((err, c) => {
+  // Ensure CORS headers are set on error responses
+  const origin = c.req.header('origin');
+  const allowed = c.env.CORS_ALLOW_ORIGIN?.split(',').map((value) => value.trim());
+  if (origin && allowed?.includes(origin)) {
+    c.header('Access-Control-Allow-Origin', origin);
+  } else if (allowed?.length) {
+    c.header('Access-Control-Allow-Origin', allowed[0]);
+  }
+  c.header('Access-Control-Allow-Credentials', 'true');
+
   if (err instanceof ZodError) {
     const message = err.issues.map((issue) => issue.message).join(', ');
     return c.json({ error: message || 'Invalid request' }, 400);
@@ -1473,7 +1483,7 @@ app.get('/api/admin/stats/events', async (c) => {
   const days = periodMatch ? Math.min(Number(periodMatch[1]), 365) : 7;
 
   const startDate = DateTime.utc().minus({ days }).startOf('day');
-  const startDateStr = startDate.toISO();
+  const startDateStr = startDate.toISO() ?? DateTime.utc().minus({ days: 7 }).toISO()!;
 
   // Event counts by name
   const eventCountsResult = await c.env.DB.prepare(
