@@ -278,6 +278,7 @@ export interface AdminNotifyRequest {
   body?: string;
   target: AdminNotifyTarget;
   userIds?: string[];
+  includePayload?: boolean;
 }
 
 export async function sendAdminNotification(

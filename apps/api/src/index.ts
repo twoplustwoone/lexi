@@ -773,12 +773,20 @@ app.post('/api/admin/notify', async (c) => {
   const body = await c.req.json().catch(() => null);
   const notifySchema = z
     .object({
-      title: z.string().trim().min(1).max(120),
+      title: z.string().trim().max(120),
       body: z.string().trim().max(200).optional(),
       target: z.enum(['self', 'all', 'admins', 'enabled', 'custom']),
       userIds: z.array(uuidSchema).optional(),
+      includePayload: z.boolean().optional(),
     })
     .superRefine((value, ctx) => {
+      if (value.includePayload !== false && value.title.length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Title is required when sending a payload.',
+          path: ['title'],
+        });
+      }
       if (value.target === 'custom') {
         if (!value.userIds || value.userIds.length === 0) {
           ctx.addIssue({
@@ -801,13 +809,14 @@ app.post('/api/admin/notify', async (c) => {
   }
 
   const parsed = notifySchema.parse(body);
-  const payload: WebPushPayload = {
-    title: parsed.title,
-    url: '/',
-  };
-  if (parsed.body) {
-    payload.body = parsed.body;
-  }
+  const includePayload = parsed.includePayload ?? true;
+  const payload: WebPushPayload | undefined = includePayload
+    ? {
+        title: parsed.title,
+        url: '/',
+        body: parsed.body,
+      }
+    : undefined;
 
   const target = parsed.target;
   const selectedUserIds =

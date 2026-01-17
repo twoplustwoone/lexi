@@ -26,6 +26,7 @@ export function AdminPanel({ currentUserId }: AdminPanelProps) {
   const [notifyBody, setNotifyBody] = useState('');
   const [notifyTarget, setNotifyTarget] = useState<AdminNotifyTarget>('self');
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
+  const [includePayload, setIncludePayload] = useState(true);
   const [pushStatus, setPushStatus] = useState<{
     supported: boolean;
     permission: NotificationPermission | 'unsupported';
@@ -160,14 +161,14 @@ export function AdminPanel({ currentUserId }: AdminPanelProps) {
 
   const isSendDisabled =
     notifyLoading ||
-    !notifyTitle.trim() ||
+    (includePayload && !notifyTitle.trim()) ||
     (notifyTarget === 'custom' && selectedUserIds.length === 0);
 
   const handleSendNotification = async () => {
     const trimmedTitle = notifyTitle.trim();
     const trimmedBody = notifyBody.trim();
-    if (!trimmedTitle) {
-      setNotifyError('Add a title before sending.');
+    if (includePayload && !trimmedTitle) {
+      setNotifyError('Add a title before sending a payload.');
       return;
     }
     if (notifyTarget === 'custom' && selectedUserIds.length === 0) {
@@ -184,6 +185,7 @@ export function AdminPanel({ currentUserId }: AdminPanelProps) {
         body: trimmedBody ? trimmedBody : undefined,
         target: notifyTarget,
         userIds: notifyTarget === 'custom' ? selectedUserIds : undefined,
+        includePayload,
       });
       setNotifyResult(response);
     } catch (err) {
@@ -255,6 +257,20 @@ export function AdminPanel({ currentUserId }: AdminPanelProps) {
               <option value="enabled">Notifications enabled</option>
             </select>
           </label>
+          <label className="flex items-center gap-2 text-xs font-semibold">
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border border-[rgba(30,27,22,0.2)] text-accent focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+              checked={includePayload}
+              onChange={(event) => setIncludePayload(event.currentTarget.checked)}
+            />
+            Include payload (title/body)
+          </label>
+          {!includePayload ? (
+            <p className="text-xs text-muted">
+              Payload disabled — push will use the default notification text on device.
+            </p>
+          ) : null}
           {notifyTarget === 'custom' ? (
             <p className="text-xs text-muted">
               Selected users: {selectedUserIds.length}. Use the checkboxes below to choose
