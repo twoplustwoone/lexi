@@ -52,12 +52,34 @@ self.addEventListener('fetch', (event) => {
 });
 
 self.addEventListener('push', (event) => {
-  const title = 'Your word of the day is ready!';
+  let title = 'Your word of the day is ready!';
+  let body = "Tap to read today's word and its story.";
+  let url = '/';
+
+  if (event.data) {
+    try {
+      const payload = event.data.json();
+      if (payload && typeof payload === 'object') {
+        if (typeof payload.title === 'string' && payload.title.trim().length) {
+          title = payload.title;
+        }
+        if (typeof payload.body === 'string' && payload.body.trim().length) {
+          body = payload.body;
+        }
+        if (typeof payload.url === 'string' && payload.url.trim().length) {
+          url = payload.url;
+        }
+      }
+    } catch {
+      // Ignore malformed push payloads and fall back to defaults.
+    }
+  }
+
   const options = {
-    body: "Tap to read today's word and its story.",
+    body,
     icon: '/icons/icon-192.png',
     badge: '/icons/icon-192.png',
-    data: { url: '/' },
+    data: { url },
   };
   event.waitUntil(self.registration.showNotification(title, options));
 });

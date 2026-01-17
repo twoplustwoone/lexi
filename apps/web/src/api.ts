@@ -249,6 +249,7 @@ export async function logout(): Promise<void> {
 }
 
 export interface AdminNotifyResult {
+  userId: string;
   endpointDomain: string;
   status: number;
   ok: boolean;
@@ -256,14 +257,33 @@ export interface AdminNotifyResult {
   error?: string;
 }
 
+export type AdminNotifyTarget = 'self' | 'all' | 'admins' | 'enabled' | 'custom';
+
+export interface AdminNotifyTargetSummary {
+  mode: AdminNotifyTarget;
+  userCount: number;
+  subscriptionCount: number;
+}
+
 export interface AdminNotifyResponse {
   ok: boolean;
   results: AdminNotifyResult[];
+  target?: AdminNotifyTargetSummary;
+  missingUserIds?: string[];
   vapidSubject?: string;
 }
 
-export async function sendAdminTestNotification(): Promise<AdminNotifyResponse> {
-  return apiFetch('/admin/notify', { method: 'POST' });
+export interface AdminNotifyRequest {
+  title: string;
+  body?: string;
+  target: AdminNotifyTarget;
+  userIds?: string[];
+}
+
+export async function sendAdminNotification(
+  payload: AdminNotifyRequest
+): Promise<AdminNotifyResponse> {
+  return apiFetch('/admin/notify', { method: 'POST', body: JSON.stringify(payload) });
 }
 
 export interface AdminUser {

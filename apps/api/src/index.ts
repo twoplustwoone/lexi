@@ -37,7 +37,7 @@ import {
   upsertNotificationSchedule,
 } from './db';
 import { logInfo, logWarn, LogCategory, LogLevel, queryLogs } from './notifications/logger';
-import { sendWebPushNotification } from './notifications/push';
+import { sendWebPushNotification, WebPushPayload } from './notifications/push';
 import { processDueSchedules } from './notifications/scheduler';
 import { base64UrlDecode } from './utils/base64';
 import { hashCode, hashPassword, verifyPassword } from './utils/crypto';
@@ -770,23 +770,95 @@ app.post('/api/admin/notify', async (c) => {
     return c.json({ error: 'VAPID keys not configured' }, 503);
   }
 
-  const subscriptions = await c.env.DB.prepare(
-    'SELECT endpoint FROM push_subscriptions WHERE user_id = ?'
-  )
-    .bind(userId)
-    .all();
-  if (subscriptions.results.length === 0) {
-    return c.json({ error: 'No push subscription available' }, 400);
+  const body = await c.req.json().catch(() => null);
+  const notifySchema = z
+    .object({
+      title: z.string().trim().min(1).max(120),
+      body: z.string().trim().max(200).optional(),
+      target: z.enum(['self', 'all', 'admins', 'enabled', 'custom']),
+      userIds: z.array(uuidSchema).optional(),
+    })
+    .superRefine((value, ctx) => {
+      if (value.target === 'custom') {
+        if (!value.userIds || value.userIds.length === 0) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'Select at least one user.',
+            path: ['userIds'],
+          });
+        }
+      } else if (value.userIds && value.userIds.length > 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'User selection is only valid for the custom target.',
+          path: ['userIds'],
+        });
+      }
+    });
+
+  if (!body) {
+    return c.json({ error: 'Request body required' }, 400);
   }
 
-  // Ensure a daily word is ready for the user (side effect only)
-  await ensureDailyWordForUser(c.env, {
-    userId,
-    timezone: user.timezone,
-  });
+  const parsed = notifySchema.parse(body);
+  const payload: WebPushPayload = {
+    title: parsed.title,
+    url: '/',
+  };
+  if (parsed.body) {
+    payload.body = parsed.body;
+  }
+
+  const target = parsed.target;
+  const selectedUserIds =
+    target === 'custom'
+      ? Array.from(new Set(parsed.userIds ?? []))
+      : target === 'self'
+        ? [userId]
+        : [];
+
+  let query =
+    'SELECT ps.user_id as user_id, ps.endpoint as endpoint, ps.p256dh as p256dh, ps.auth as auth ' +
+    'FROM push_subscriptions ps ' +
+    'JOIN users u ON u.id = ps.user_id ';
+  const bindings: string[] = [];
+
+  if (target === 'enabled') {
+    query += 'JOIN notification_schedules ns ON ns.user_id = u.id ';
+  }
+
+  query += 'WHERE u.is_anonymous = 0 ';
+
+  if (target === 'admins') {
+    query += 'AND u.is_admin = 1 ';
+  }
+
+  if (target === 'enabled') {
+    query += 'AND ns.enabled = 1 ';
+  }
+
+  if (target === 'custom' || target === 'self') {
+    const placeholders = selectedUserIds.map(() => '?').join(', ');
+    query += `AND ps.user_id IN (${placeholders}) `;
+    bindings.push(...selectedUserIds);
+  }
+
+  const subscriptions = await c.env.DB.prepare(query)
+    .bind(...bindings)
+    .all();
+  const rows = subscriptions.results as Array<{
+    user_id: string;
+    endpoint: string;
+    p256dh: string;
+    auth: string;
+  }>;
+  if (rows.length === 0) {
+    return c.json({ error: 'No push subscriptions found for the selected target.' }, 400);
+  }
 
   // Send push notifications directly with detailed response
   const results: Array<{
+    userId: string;
     endpointDomain: string;
     status: number;
     ok: boolean;
@@ -794,7 +866,7 @@ app.post('/api/admin/notify', async (c) => {
     error?: string;
   }> = [];
 
-  for (const sub of subscriptions.results as Array<{ endpoint: string }>) {
+  for (const sub of rows) {
     const endpointDomain = new URL(sub.endpoint).host;
     try {
       const response = await sendWebPushNotification({
@@ -802,15 +874,21 @@ app.post('/api/admin/notify', async (c) => {
         publicKey: c.env.VAPID_PUBLIC_KEY,
         privateKey: c.env.VAPID_PRIVATE_KEY,
         subject: c.env.VAPID_SUBJECT,
+        payload,
+        subscriptionKeys: {
+          p256dh: sub.p256dh,
+          auth: sub.auth,
+        },
       });
 
-      const body = await response.text().catch(() => null);
+      const responseBody = await response.text().catch(() => null);
 
       results.push({
+        userId: sub.user_id,
         endpointDomain,
         status: response.status,
         ok: response.ok,
-        body: body?.slice(0, 500) ?? undefined,
+        body: responseBody?.slice(0, 500) ?? undefined,
       });
 
       if (response.status === 404 || response.status === 410) {
@@ -820,6 +898,7 @@ app.post('/api/admin/notify', async (c) => {
       }
     } catch (error) {
       results.push({
+        userId: sub.user_id,
         endpointDomain,
         status: 0,
         ok: false,
@@ -828,9 +907,19 @@ app.post('/api/admin/notify', async (c) => {
     }
   }
 
+  const targetedUsers = new Set(results.map((result) => result.userId));
+  const missingUserIds =
+    target === 'custom' ? selectedUserIds.filter((id) => !targetedUsers.has(id)) : undefined;
+
   return c.json({
     ok: results.some((r) => r.ok),
     results,
+    target: {
+      mode: target,
+      userCount: targetedUsers.size,
+      subscriptionCount: results.length,
+    },
+    missingUserIds: missingUserIds && missingUserIds.length > 0 ? missingUserIds : undefined,
     vapidSubject: c.env.VAPID_SUBJECT,
   });
 });

@@ -2,9 +2,10 @@ import { useEffect, useMemo, useState } from 'preact/hooks';
 
 import {
   AdminNotifyResponse,
+  AdminNotifyTarget,
   AdminUser,
   fetchAdminUsers,
-  sendAdminTestNotification,
+  sendAdminNotification,
   setUserAdmin,
 } from '../api';
 import { Button } from './Button';
@@ -21,6 +22,10 @@ export function AdminPanel({ currentUserId }: AdminPanelProps) {
   const [notifyLoading, setNotifyLoading] = useState(false);
   const [notifyError, setNotifyError] = useState<string | null>(null);
   const [notifyResult, setNotifyResult] = useState<AdminNotifyResponse | null>(null);
+  const [notifyTitle, setNotifyTitle] = useState('');
+  const [notifyBody, setNotifyBody] = useState('');
+  const [notifyTarget, setNotifyTarget] = useState<AdminNotifyTarget>('self');
+  const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
   const [pushStatus, setPushStatus] = useState<{
     supported: boolean;
     permission: NotificationPermission | 'unsupported';
@@ -134,6 +139,18 @@ export function AdminPanel({ currentUserId }: AdminPanelProps) {
     return user.id.slice(0, 8) + '...';
   };
 
+  const userDisplayNames = useMemo(() => {
+    return new Map(users.map((user) => [user.id, getDisplayName(user)]));
+  }, [users]);
+
+  const selectedUserSet = useMemo(() => new Set(selectedUserIds), [selectedUserIds]);
+
+  const toggleUserSelection = (userId: string) => {
+    setSelectedUserIds((prev) =>
+      prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]
+    );
+  };
+
   const notifySummary = useMemo(() => {
     if (!notifyResult) return null;
     const total = notifyResult.results.length;
@@ -141,15 +158,36 @@ export function AdminPanel({ currentUserId }: AdminPanelProps) {
     return { total, okCount, failed: total - okCount };
   }, [notifyResult]);
 
-  const handleSendTestNotification = async () => {
+  const isSendDisabled =
+    notifyLoading ||
+    !notifyTitle.trim() ||
+    (notifyTarget === 'custom' && selectedUserIds.length === 0);
+
+  const handleSendNotification = async () => {
+    const trimmedTitle = notifyTitle.trim();
+    const trimmedBody = notifyBody.trim();
+    if (!trimmedTitle) {
+      setNotifyError('Add a title before sending.');
+      return;
+    }
+    if (notifyTarget === 'custom' && selectedUserIds.length === 0) {
+      setNotifyError('Select at least one user for the custom target.');
+      return;
+    }
+
     setNotifyLoading(true);
     setNotifyError(null);
     setNotifyResult(null);
     try {
-      const response = await sendAdminTestNotification();
+      const response = await sendAdminNotification({
+        title: trimmedTitle,
+        body: trimmedBody ? trimmedBody : undefined,
+        target: notifyTarget,
+        userIds: notifyTarget === 'custom' ? selectedUserIds : undefined,
+      });
       setNotifyResult(response);
     } catch (err) {
-      setNotifyError(err instanceof Error ? err.message : 'Failed to send test notification.');
+      setNotifyError(err instanceof Error ? err.message : 'Failed to send notification.');
     } finally {
       setNotifyLoading(false);
     }
@@ -177,21 +215,62 @@ export function AdminPanel({ currentUserId }: AdminPanelProps) {
   return (
     <div className="space-y-4">
       <div className="rounded-2xl border border-[rgba(30,27,22,0.12)] bg-[rgba(255,252,247,0.7)] p-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h4 className="text-sm font-semibold">Notifications</h4>
-            <p className="mt-1 text-xs text-muted">
-              Sends a test push to this admin account using the stored subscriptions.
+        <div>
+          <h4 className="text-sm font-semibold">Admin notifications</h4>
+          <p className="mt-1 text-xs text-muted">
+            Send an immediate push to selected users or segments.
+          </p>
+        </div>
+        <div className="mt-3 grid gap-3">
+          <label className="flex flex-col gap-1 text-xs font-semibold">
+            Title
+            <input
+              type="text"
+              className="rounded-xl border border-[rgba(30,27,22,0.12)] bg-white px-3 py-2 text-sm font-normal focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+              value={notifyTitle}
+              onInput={(event) => setNotifyTitle(event.currentTarget.value)}
+              placeholder="Today’s reminder"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-xs font-semibold">
+            Body (optional)
+            <textarea
+              className="min-h-[88px] rounded-xl border border-[rgba(30,27,22,0.12)] bg-white px-3 py-2 text-sm font-normal focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+              value={notifyBody}
+              onInput={(event) => setNotifyBody(event.currentTarget.value)}
+              placeholder="Tap to open Lexi."
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-xs font-semibold">
+            Target
+            <select
+              className="rounded-xl border border-[rgba(30,27,22,0.12)] bg-white px-3 py-2 text-sm font-normal focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+              value={notifyTarget}
+              onChange={(event) => setNotifyTarget(event.currentTarget.value as AdminNotifyTarget)}
+            >
+              <option value="self">Just me (test)</option>
+              <option value="custom">Selected users</option>
+              <option value="all">All users</option>
+              <option value="admins">Admins</option>
+              <option value="enabled">Notifications enabled</option>
+            </select>
+          </label>
+          {notifyTarget === 'custom' ? (
+            <p className="text-xs text-muted">
+              Selected users: {selectedUserIds.length}. Use the checkboxes below to choose
+              recipients.
             </p>
+          ) : null}
+          <div>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleSendNotification}
+              disabled={isSendDisabled}
+            >
+              {notifyLoading ? 'Sending…' : 'Send now'}
+            </Button>
           </div>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={handleSendTestNotification}
-            disabled={notifyLoading}
-          >
-            {notifyLoading ? 'Sending…' : 'Send test notification'}
-          </Button>
         </div>
         {pushStatus ? (
           <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted">
@@ -220,6 +299,20 @@ export function AdminPanel({ currentUserId }: AdminPanelProps) {
             <p className={notifyResult.ok ? 'text-accent-strong' : 'text-[#8f2d2d]'}>
               {notifySummary?.okCount ?? 0}/{notifySummary?.total ?? 0} notifications delivered.
             </p>
+            {notifyResult.target ? (
+              <p className="text-xs text-muted">
+                Target: {notifyResult.target.mode} · {notifyResult.target.userCount} users ·{' '}
+                {notifyResult.target.subscriptionCount} subscriptions
+              </p>
+            ) : null}
+            {notifyResult.missingUserIds && notifyResult.missingUserIds.length > 0 ? (
+              <p className="text-xs text-muted">
+                No subscriptions for:{' '}
+                {notifyResult.missingUserIds
+                  .map((id) => userDisplayNames.get(id) ?? id.slice(0, 8) + '...')
+                  .join(', ')}
+              </p>
+            ) : null}
             <div className="space-y-2">
               {notifyResult.results.map((result, index) => (
                 <div
@@ -227,11 +320,14 @@ export function AdminPanel({ currentUserId }: AdminPanelProps) {
                   className="rounded-lg border border-[rgba(30,27,22,0.08)] bg-surface px-3 py-2 text-xs text-muted"
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span>{result.endpointDomain}</span>
+                    <span className="truncate">
+                      {userDisplayNames.get(result.userId) ?? result.userId.slice(0, 8) + '...'}
+                    </span>
                     <span className={result.ok ? 'text-accent-strong' : 'text-[#8f2d2d]'}>
                       {result.status ? `HTTP ${result.status}` : 'Error'}
                     </span>
                   </div>
+                  <p className="mt-1 text-[11px] text-muted">{result.endpointDomain}</p>
                   {result.error ? <p className="mt-1 text-[#8f2d2d]">{result.error}</p> : null}
                   {result.body ? <p className="mt-1">{result.body}</p> : null}
                 </div>
@@ -257,9 +353,21 @@ export function AdminPanel({ currentUserId }: AdminPanelProps) {
                 className="flex items-center justify-between rounded-lg border border-[rgba(30,27,22,0.08)] bg-surface p-3"
               >
                 <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium">{getDisplayName(user)}</p>
-                  <p className="text-xs text-muted">Joined {formatDate(user.createdAt)}</p>
-                  <p className="text-xs text-muted">{getAuthSummary(user)}</p>
+                  <div className="flex min-w-0 items-center gap-3">
+                    {notifyTarget === 'custom' ? (
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 rounded border border-[rgba(30,27,22,0.2)] text-accent focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+                        checked={selectedUserSet.has(user.id)}
+                        onChange={() => toggleUserSelection(user.id)}
+                      />
+                    ) : null}
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-medium">{getDisplayName(user)}</p>
+                      <p className="text-xs text-muted">Joined {formatDate(user.createdAt)}</p>
+                      <p className="text-xs text-muted">{getAuthSummary(user)}</p>
+                    </div>
+                  </div>
                 </div>
                 <div className="ml-3 flex items-center gap-2">
                   {user.isAdmin && (

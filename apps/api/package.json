@@ -8,6 +8,7 @@
     "dev": "wrangler dev --local",
     "build": "wrangler deploy --dry-run --outdir dist",
     "lint": "eslint src --max-warnings=0",
+    "lint:fix": "eslint src --fix",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "db:migrate": "wrangler d1 migrations apply word_of_the_day --local"

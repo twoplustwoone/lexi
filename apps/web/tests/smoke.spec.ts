@@ -122,7 +122,12 @@ async function mockApi(page: Page, overrides: ApiOverrides = {}) {
 
     if (pathname === '/api/admin/notify') {
       await route.fulfill({
-        json: { ok: true, results: [], vapidSubject: 'mailto:test@example.com' },
+        json: {
+          ok: true,
+          results: [],
+          target: { mode: 'self', userCount: 1, subscriptionCount: 0 },
+          vapidSubject: 'mailto:test@example.com',
+        },
       });
       return;
     }
@@ -195,10 +200,11 @@ test('shows admin actions when authenticated as admin', async ({ page }) => {
   await page.goto('/admin');
   await expect(page.getByText('Signed in as admin-user')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Send test notification' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Send now' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Sign in' })).toHaveCount(0);
 
+  await page.getByLabel('Title').fill('Test notification');
   const requestPromise = page.waitForRequest((req) => req.url().endsWith('/api/admin/notify'));
-  await page.getByRole('button', { name: 'Send test notification' }).click();
+  await page.getByRole('button', { name: 'Send now' }).click();
   await requestPromise;
 });
