@@ -32,25 +32,16 @@ function toArrayBuffer(data: Uint8Array): ArrayBuffer {
   return buffer;
 }
 
-function uint16be(value: number): Uint8Array {
-  return new Uint8Array([value >> 8, value & 0xff]);
+function buildInfo(label: string): Uint8Array {
+  return textEncoder.encode(`Content-Encoding: ${label}\0`);
 }
 
-function buildInfo(label: string, context?: Uint8Array): Uint8Array {
-  const info = textEncoder.encode(`Content-Encoding: ${label}\0`);
-  return context ? concatBytes(info, context) : info;
-}
-
-function buildContext(clientPublicKey: Uint8Array, serverPublicKey: Uint8Array): Uint8Array {
-  const label = textEncoder.encode('P-256');
-  return concatBytes(
-    label,
-    new Uint8Array([0]),
-    uint16be(clientPublicKey.length),
-    clientPublicKey,
-    uint16be(serverPublicKey.length),
-    serverPublicKey
-  );
+function buildWebPushInfo(
+  clientPublicKey: Uint8Array,
+  serverPublicKey: Uint8Array
+): Uint8Array {
+  const info = textEncoder.encode('WebPush: info\0');
+  return concatBytes(info, clientPublicKey, serverPublicKey);
 }
 
 async function hkdf(
@@ -102,11 +93,15 @@ async function encryptPayload(
     await crypto.subtle.deriveBits({ name: 'ECDH', public: clientKey }, serverKeys.privateKey, 256)
   );
 
-  const ikm = await hkdf(sharedSecret, authSecret, buildInfo('auth'), 32);
+  const ikm = await hkdf(
+    sharedSecret,
+    authSecret,
+    buildWebPushInfo(clientPublicKey, serverPublicKey),
+    32
+  );
   const salt = crypto.getRandomValues(new Uint8Array(16));
-  const context = buildContext(clientPublicKey, serverPublicKey);
-  const cek = await hkdf(ikm, salt, buildInfo('aes128gcm', context), 16);
-  const nonce = await hkdf(ikm, salt, buildInfo('nonce', context), 12);
+  const cek = await hkdf(ikm, salt, buildInfo('aes128gcm'), 16);
+  const nonce = await hkdf(ikm, salt, buildInfo('nonce'), 12);
 
   const cekKey = await crypto.subtle.importKey('raw', toArrayBuffer(cek), 'AES-GCM', false, [
     'encrypt',
@@ -154,10 +149,12 @@ export async function sendWebPushNotification(params: {
     const encrypted = await encryptPayload(payloadBytes, params.subscriptionKeys);
 
     headers['Content-Encoding'] = 'aes128gcm';
-    headers.Encryption = `salt=${base64UrlEncode(encrypted.salt)}; rs=${RECORD_SIZE}`;
+    headers.Encryption = `salt=${base64UrlEncode(encrypted.salt)}`;
     headers['Crypto-Key'] =
       `dh=${base64UrlEncode(encrypted.serverPublicKey)}; p256ecdsa=${params.publicKey}`;
+    headers['Content-Type'] = 'application/octet-stream';
     body = encrypted.body;
+    headers['Content-Length'] = String(body.byteLength);
   } else {
     headers['Content-Length'] = '0';
   }
