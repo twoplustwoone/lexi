@@ -52,7 +52,7 @@ self.addEventListener('fetch', (event) => {
 });
 
 self.addEventListener('push', (event) => {
-  const title = 'Lexi: your word of the day is ready';
+  const title = 'Your word of the day is ready!';
   const options = {
     body: "Tap to read today's word and its story.",
     icon: '/icons/icon-192.png',
