@@ -1283,6 +1283,254 @@ app.put('/api/admin/users/:id/admin', async (c) => {
   return c.json({ ok: true, isAdmin: parsed.isAdmin });
 });
 
+app.get('/api/admin/stats', async (c) => {
+  const cookies = parseCookies(c.req.header('cookie') ?? null);
+  const token = cookies.session ?? null;
+  const userId = await getSessionUserId(c.env, token);
+  if (!userId) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const user = await getUserById(c.env, userId);
+  if (!user || user.is_admin !== 1) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+
+  // User counts
+  const userCountsResult = await c.env.DB.prepare(
+    `
+    SELECT
+      COUNT(*) as total,
+      SUM(CASE WHEN is_anonymous = 1 THEN 1 ELSE 0 END) as anonymous,
+      SUM(CASE WHEN is_anonymous = 0 THEN 1 ELSE 0 END) as authenticated,
+      SUM(CASE WHEN is_admin = 1 THEN 1 ELSE 0 END) as admins
+    FROM users
+    WHERE merged_into_user_id IS NULL
+  `
+  ).first();
+
+  // Auth method breakdown
+  const passwordCount = await c.env.DB.prepare(
+    'SELECT COUNT(DISTINCT user_id) as count FROM auth_email_password WHERE password_set = 1'
+  ).first();
+  const googleCount = await c.env.DB.prepare(
+    "SELECT COUNT(DISTINCT user_id) as count FROM auth_oauth WHERE provider = 'google'"
+  ).first();
+  const emailCodeCount = await c.env.DB.prepare(
+    'SELECT COUNT(DISTINCT user_id) as count FROM auth_email_password WHERE password_set = 0'
+  ).first();
+
+  // Engagement metrics
+  const wordsDelivered = await c.env.DB.prepare('SELECT COUNT(*) as count FROM user_words').first();
+  const wordsViewed = await c.env.DB.prepare(
+    'SELECT COUNT(*) as count FROM user_words WHERE viewed_at IS NOT NULL'
+  ).first();
+
+  const totalDelivered = Number(wordsDelivered?.count ?? 0);
+  const totalViewed = Number(wordsViewed?.count ?? 0);
+  const viewRate = totalDelivered > 0 ? Math.round((totalViewed / totalDelivered) * 100) : 0;
+
+  // Notification stats
+  const notificationStats = await c.env.DB.prepare(
+    `
+    SELECT
+      SUM(CASE WHEN enabled = 1 THEN 1 ELSE 0 END) as enabled_count,
+      SUM(CASE WHEN enabled = 0 THEN 1 ELSE 0 END) as disabled_count
+    FROM notification_schedules
+  `
+  ).first();
+
+  const pushSubscriptions = await c.env.DB.prepare(
+    'SELECT COUNT(DISTINCT user_id) as count FROM push_subscriptions'
+  ).first();
+
+  return c.json({
+    users: {
+      total: Number(userCountsResult?.total ?? 0),
+      anonymous: Number(userCountsResult?.anonymous ?? 0),
+      authenticated: Number(userCountsResult?.authenticated ?? 0),
+      admins: Number(userCountsResult?.admins ?? 0),
+      byAuthMethod: {
+        password: Number(passwordCount?.count ?? 0),
+        google: Number(googleCount?.count ?? 0),
+        emailCode: Number(emailCodeCount?.count ?? 0),
+      },
+    },
+    engagement: {
+      totalWordsDelivered: totalDelivered,
+      totalWordsViewed: totalViewed,
+      viewRate,
+    },
+    notifications: {
+      enabledCount: Number(notificationStats?.enabled_count ?? 0),
+      disabledCount: Number(notificationStats?.disabled_count ?? 0),
+      pushSubscriptions: Number(pushSubscriptions?.count ?? 0),
+    },
+  });
+});
+
+app.get('/api/admin/stats/timeline', async (c) => {
+  const cookies = parseCookies(c.req.header('cookie') ?? null);
+  const token = cookies.session ?? null;
+  const userId = await getSessionUserId(c.env, token);
+  if (!userId) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const user = await getUserById(c.env, userId);
+  if (!user || user.is_admin !== 1) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+
+  const periodParam = c.req.query('period') ?? '7d';
+  const periodMatch = periodParam.match(/^(\d+)d$/);
+  const days = periodMatch ? Math.min(Number(periodMatch[1]), 365) : 7;
+
+  const startDate = DateTime.utc().minus({ days }).startOf('day');
+  const startDateStr = startDate.toISODate();
+
+  // User growth over time
+  const userGrowthResult = await c.env.DB.prepare(
+    `
+    SELECT
+      DATE(created_at) as date,
+      COUNT(*) as total,
+      SUM(CASE WHEN is_anonymous = 0 THEN 1 ELSE 0 END) as authenticated
+    FROM users
+    WHERE DATE(created_at) >= ? AND merged_into_user_id IS NULL
+    GROUP BY DATE(created_at)
+    ORDER BY date ASC
+  `
+  )
+    .bind(startDateStr)
+    .all();
+
+  // Words delivered over time
+  const wordsDeliveredResult = await c.env.DB.prepare(
+    `
+    SELECT
+      DATE(delivered_at) as date,
+      COUNT(*) as delivered,
+      SUM(CASE WHEN viewed_at IS NOT NULL THEN 1 ELSE 0 END) as viewed
+    FROM user_words
+    WHERE DATE(delivered_at) >= ?
+    GROUP BY DATE(delivered_at)
+    ORDER BY date ASC
+  `
+  )
+    .bind(startDateStr)
+    .all();
+
+  // Account creations by method
+  const accountCreationsResult = await c.env.DB.prepare(
+    `
+    SELECT
+      DATE(timestamp) as date,
+      SUM(CASE WHEN json_extract(metadata_json, '$.method') = 'email_password' THEN 1 ELSE 0 END) as password,
+      SUM(CASE WHEN json_extract(metadata_json, '$.method') = 'google' THEN 1 ELSE 0 END) as google,
+      SUM(CASE WHEN json_extract(metadata_json, '$.method') = 'email_code' THEN 1 ELSE 0 END) as emailCode
+    FROM analytics_events
+    WHERE event_name = 'account_created' AND DATE(timestamp) >= ?
+    GROUP BY DATE(timestamp)
+    ORDER BY date ASC
+  `
+  )
+    .bind(startDateStr)
+    .all();
+
+  return c.json({
+    userGrowth: userGrowthResult.results.map((row) => ({
+      date: row.date as string,
+      total: Number(row.total),
+      authenticated: Number(row.authenticated),
+    })),
+    wordsDelivered: wordsDeliveredResult.results.map((row) => ({
+      date: row.date as string,
+      delivered: Number(row.delivered),
+      viewed: Number(row.viewed),
+    })),
+    accountCreations: accountCreationsResult.results.map((row) => ({
+      date: row.date as string,
+      password: Number(row.password),
+      google: Number(row.google),
+      emailCode: Number(row.emailCode),
+    })),
+  });
+});
+
+app.get('/api/admin/stats/events', async (c) => {
+  const cookies = parseCookies(c.req.header('cookie') ?? null);
+  const token = cookies.session ?? null;
+  const userId = await getSessionUserId(c.env, token);
+  if (!userId) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const user = await getUserById(c.env, userId);
+  if (!user || user.is_admin !== 1) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+
+  const periodParam = c.req.query('period') ?? '7d';
+  const periodMatch = periodParam.match(/^(\d+)d$/);
+  const days = periodMatch ? Math.min(Number(periodMatch[1]), 365) : 7;
+
+  const startDate = DateTime.utc().minus({ days }).startOf('day');
+  const startDateStr = startDate.toISO();
+
+  // Event counts by name
+  const eventCountsResult = await c.env.DB.prepare(
+    `
+    SELECT event_name, COUNT(*) as count
+    FROM analytics_events
+    WHERE timestamp >= ?
+    GROUP BY event_name
+    ORDER BY count DESC
+  `
+  )
+    .bind(startDateStr)
+    .all();
+
+  // Client breakdown
+  const clientBreakdownResult = await c.env.DB.prepare(
+    `
+    SELECT
+      SUM(CASE WHEN client = 'web' THEN 1 ELSE 0 END) as web,
+      SUM(CASE WHEN client = 'pwa' THEN 1 ELSE 0 END) as pwa
+    FROM analytics_events
+    WHERE timestamp >= ?
+  `
+  )
+    .bind(startDateStr)
+    .first();
+
+  // Recent events
+  const recentEventsResult = await c.env.DB.prepare(
+    `
+    SELECT event_name, timestamp, user_id, client
+    FROM analytics_events
+    ORDER BY timestamp DESC
+    LIMIT 50
+  `
+  ).all();
+
+  const eventCounts: Record<string, number> = {};
+  for (const row of eventCountsResult.results) {
+    eventCounts[row.event_name as string] = Number(row.count);
+  }
+
+  return c.json({
+    eventCounts,
+    clientBreakdown: {
+      web: Number(clientBreakdownResult?.web ?? 0),
+      pwa: Number(clientBreakdownResult?.pwa ?? 0),
+    },
+    recentEvents: recentEventsResult.results.map((row) => ({
+      event_name: row.event_name as string,
+      timestamp: row.timestamp as string,
+      user_id: row.user_id as string,
+      client: row.client as string,
+    })),
+  });
+});
+
 app.get('/api/word/:id', async (c) => {
   const id = Number(c.req.param('id'));
   if (Number.isNaN(id)) {

@@ -329,3 +329,57 @@ export async function setUserAdmin(userId: string, isAdmin: boolean): Promise<vo
     body: JSON.stringify({ isAdmin }),
   });
 }
+
+// Admin Dashboard Stats Types
+export interface AdminStats {
+  users: {
+    total: number;
+    anonymous: number;
+    authenticated: number;
+    admins: number;
+    byAuthMethod: {
+      password: number;
+      google: number;
+      emailCode: number;
+    };
+  };
+  engagement: {
+    totalWordsDelivered: number;
+    totalWordsViewed: number;
+    viewRate: number;
+  };
+  notifications: {
+    enabledCount: number;
+    disabledCount: number;
+    pushSubscriptions: number;
+  };
+}
+
+export interface AdminTimelineStats {
+  userGrowth: Array<{ date: string; total: number; authenticated: number }>;
+  wordsDelivered: Array<{ date: string; delivered: number; viewed: number }>;
+  accountCreations: Array<{ date: string; password: number; google: number; emailCode: number }>;
+}
+
+export interface AdminEventStats {
+  eventCounts: Record<string, number>;
+  clientBreakdown: { web: number; pwa: number };
+  recentEvents: Array<{
+    event_name: string;
+    timestamp: string;
+    user_id: string;
+    client: string;
+  }>;
+}
+
+export async function fetchAdminStats(): Promise<AdminStats> {
+  return apiFetch<AdminStats>('/admin/stats');
+}
+
+export async function fetchAdminTimelineStats(period: string = '7d'): Promise<AdminTimelineStats> {
+  return apiFetch<AdminTimelineStats>(`/admin/stats/timeline?period=${period}`);
+}
+
+export async function fetchAdminEventStats(period: string = '7d'): Promise<AdminEventStats> {
+  return apiFetch<AdminEventStats>(`/admin/stats/events?period=${period}`);
+}

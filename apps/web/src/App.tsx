@@ -17,7 +17,7 @@ import { Loader } from './components/Loader';
 import { Home } from './screens/Home';
 import { History } from './screens/History';
 import { Settings } from './screens/Settings';
-import { Account } from './screens/Account';
+import { Admin } from './screens/Admin';
 
 interface UserState {
   userId: string | null;
@@ -166,7 +166,7 @@ function AdminRoute({
     return null;
   }
 
-  return <Account user={user} onOpenAuth={onOpenAuth} onUserChange={onUserChange} />;
+  return <Admin user={user} onOpenAuth={onOpenAuth} onUserChange={onUserChange} />;
 }
 
 function AvatarMenu({
