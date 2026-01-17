@@ -1,8 +1,9 @@
-import { base64UrlDecode, base64UrlEncode } from '../utils/base64';
+import { base64UrlDecode } from '../utils/base64';
 import { createVapidJwt } from './vapid';
 
 const textEncoder = new TextEncoder();
 const RECORD_SIZE = 4096;
+const TAG_LENGTH = 16;
 
 export interface WebPushPayload {
   title: string;
@@ -41,6 +42,20 @@ function buildWebPushInfo(clientPublicKey: Uint8Array, serverPublicKey: Uint8Arr
   return concatBytes(info, clientPublicKey, serverPublicKey);
 }
 
+function uint32be(value: number): Uint8Array {
+  const buffer = new ArrayBuffer(4);
+  new DataView(buffer).setUint32(0, value);
+  return new Uint8Array(buffer);
+}
+
+function buildPayloadHeader(salt: Uint8Array, recordSize: number, keyId: Uint8Array): Uint8Array {
+  if (keyId.length > 255) {
+    throw new Error('Key identifier too large for payload header');
+  }
+  const keyIdLength = new Uint8Array([keyId.length]);
+  return concatBytes(salt, uint32be(recordSize), keyIdLength, keyId);
+}
+
 async function hkdf(
   ikm: Uint8Array,
   salt: Uint8Array,
@@ -66,8 +81,8 @@ async function hkdf(
 async function encryptPayload(
   payload: Uint8Array,
   keys: SubscriptionKeys
-): Promise<{ body: Uint8Array; salt: Uint8Array; serverPublicKey: Uint8Array }> {
-  if (payload.length + 2 > RECORD_SIZE) {
+): Promise<{ body: Uint8Array }> {
+  if (payload.length + 1 + TAG_LENGTH > RECORD_SIZE) {
     throw new Error('Push payload too large for single record');
   }
 
@@ -103,8 +118,8 @@ async function encryptPayload(
   const cekKey = await crypto.subtle.importKey('raw', toArrayBuffer(cek), 'AES-GCM', false, [
     'encrypt',
   ]);
-  const pad = new Uint8Array(2);
-  const plaintext = concatBytes(pad, payload);
+  const padding = new Uint8Array([2]);
+  const plaintext = concatBytes(payload, padding);
   const ciphertext = new Uint8Array(
     await crypto.subtle.encrypt(
       { name: 'AES-GCM', iv: toArrayBuffer(nonce) },
@@ -113,7 +128,8 @@ async function encryptPayload(
     )
   );
 
-  return { body: ciphertext, salt, serverPublicKey };
+  const header = buildPayloadHeader(salt, RECORD_SIZE, serverPublicKey);
+  return { body: concatBytes(header, ciphertext) };
 }
 
 export async function sendWebPushNotification(params: {
@@ -133,8 +149,6 @@ export async function sendWebPushNotification(params: {
 
   const headers: Record<string, string> = {
     TTL: '86400',
-    Authorization: `WebPush ${jwt}`,
-    'Crypto-Key': `p256ecdsa=${params.publicKey}`,
   };
   let body: Uint8Array | undefined;
 
@@ -146,13 +160,13 @@ export async function sendWebPushNotification(params: {
     const encrypted = await encryptPayload(payloadBytes, params.subscriptionKeys);
 
     headers['Content-Encoding'] = 'aes128gcm';
-    headers.Encryption = `salt=${base64UrlEncode(encrypted.salt)}`;
-    headers['Crypto-Key'] =
-      `dh=${base64UrlEncode(encrypted.serverPublicKey)}; p256ecdsa=${params.publicKey}`;
     headers['Content-Type'] = 'application/octet-stream';
     body = encrypted.body;
+    headers.Authorization = `vapid t=${jwt}, k=${params.publicKey}`;
     headers['Content-Length'] = String(body.byteLength);
   } else {
+    headers.Authorization = `WebPush ${jwt}`;
+    headers['Crypto-Key'] = `p256ecdsa=${params.publicKey}`;
     headers['Content-Length'] = '0';
   }
 
