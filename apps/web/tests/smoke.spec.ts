@@ -115,8 +115,15 @@ async function mockApi(page: Page, overrides: ApiOverrides = {}) {
       return;
     }
 
+    if (pathname === '/api/admin/users') {
+      await route.fulfill({ json: { users: [], nextCursor: null } });
+      return;
+    }
+
     if (pathname === '/api/admin/notify') {
-      await route.fulfill({ json: { ok: true } });
+      await route.fulfill({
+        json: { ok: true, results: [], vapidSubject: 'mailto:test@example.com' },
+      });
       return;
     }
 
