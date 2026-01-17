@@ -36,10 +36,7 @@ function buildInfo(label: string): Uint8Array {
   return textEncoder.encode(`Content-Encoding: ${label}\0`);
 }
 
-function buildWebPushInfo(
-  clientPublicKey: Uint8Array,
-  serverPublicKey: Uint8Array
-): Uint8Array {
+function buildWebPushInfo(clientPublicKey: Uint8Array, serverPublicKey: Uint8Array): Uint8Array {
   const info = textEncoder.encode('WebPush: info\0');
   return concatBytes(info, clientPublicKey, serverPublicKey);
 }
