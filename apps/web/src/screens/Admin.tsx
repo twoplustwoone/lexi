@@ -1,4 +1,4 @@
-import { Bell, Eye, ShieldCheck, Users } from 'lucide-react';
+import { Bell, Book, Eye, ShieldCheck, Users } from 'lucide-react';
 import { useEffect, useState } from 'preact/hooks';
 
 import {
@@ -19,6 +19,7 @@ import { EngagementChart } from '../components/dashboard/EngagementChart';
 import { EventsTimeline } from '../components/dashboard/EventsTimeline';
 import { StatsCard } from '../components/dashboard/StatsCard';
 import { UserGrowthChart } from '../components/dashboard/UserGrowthChart';
+import { WordManagement } from '../components/dashboard/WordManagement';
 
 type Period = '7d' | '30d' | '90d';
 
@@ -39,7 +40,7 @@ interface AdminProps {
   }) => void;
 }
 
-type TabId = 'dashboard' | 'users' | 'notifications' | 'logs';
+type TabId = 'dashboard' | 'words' | 'users' | 'notifications' | 'logs';
 
 export function Admin({ user, onUserChange }: AdminProps) {
   const [period, setPeriod] = useState<Period>('7d');
@@ -220,6 +221,14 @@ export function Admin({ user, onUserChange }: AdminProps) {
           </button>
           <button
             type="button"
+            onClick={() => setActiveTab('words')}
+            className={tabButtonClass('words')}
+          >
+            <Book size={14} className="mr-1.5 inline-block" />
+            Words
+          </button>
+          <button
+            type="button"
             onClick={() => setActiveTab('users')}
             className={tabButtonClass('users')}
           >
@@ -236,11 +245,12 @@ export function Admin({ user, onUserChange }: AdminProps) {
       </div>
 
       {/* Tab content */}
-      {activeTab === 'users' || activeTab === 'notifications' ? (
+      {activeTab === 'words' && <WordManagement />}
+      {(activeTab === 'users' || activeTab === 'notifications') && (
         <div className={`${cardBase} p-6`}>
           <AdminPanel currentUserId={user.userId} />
         </div>
-      ) : null}
+      )}
 
       {/* Account section */}
       <div className={`${cardBase} p-6`}>

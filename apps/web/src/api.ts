@@ -383,3 +383,79 @@ export async function fetchAdminTimelineStats(period: string = '7d'): Promise<Ad
 export async function fetchAdminEventStats(period: string = '7d'): Promise<AdminEventStats> {
   return apiFetch<AdminEventStats>(`/admin/stats/activity?period=${period}`);
 }
+
+// Admin Word Management Types
+export interface AdminWord {
+  id: number;
+  word: string;
+  definition: string;
+  etymology: string;
+  pronunciation: string;
+  examples: string[];
+  created_at: string;
+}
+
+export interface WordInput {
+  word: string;
+  definition: string;
+  etymology?: string;
+  pronunciation?: string;
+  examples?: string[];
+}
+
+export interface AdminWordsResponse {
+  words: AdminWord[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface BulkCreateResult {
+  created: number;
+  errors: Array<{ index: number; error: string }>;
+}
+
+export async function fetchAdminWords(
+  options: {
+    limit?: number;
+    offset?: number;
+    search?: string;
+  } = {}
+): Promise<AdminWordsResponse> {
+  const params = new URLSearchParams();
+  if (options.limit) params.set('limit', String(options.limit));
+  if (options.offset) params.set('offset', String(options.offset));
+  if (options.search) params.set('search', options.search);
+  const query = params.toString();
+  return apiFetch<AdminWordsResponse>(`/admin/words${query ? `?${query}` : ''}`);
+}
+
+export async function createAdminWord(input: WordInput): Promise<{ word: AdminWord }> {
+  return apiFetch<{ word: AdminWord }>('/admin/words', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function updateAdminWord(
+  id: number,
+  input: Partial<WordInput>
+): Promise<{ word: AdminWord }> {
+  return apiFetch<{ word: AdminWord }>(`/admin/words/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function deleteAdminWord(id: number): Promise<{ ok: boolean }> {
+  return apiFetch<{ ok: boolean }>(`/admin/words/${id}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function bulkCreateAdminWords(words: WordInput[]): Promise<BulkCreateResult> {
+  return apiFetch<BulkCreateResult>('/admin/words/bulk', {
+    method: 'POST',
+    body: JSON.stringify({ words }),
+  });
+}

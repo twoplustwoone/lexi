@@ -41,7 +41,16 @@ import { sendWebPushNotification, WebPushPayload } from './notifications/push';
 import { processDueSchedules } from './notifications/scheduler';
 import { base64UrlDecode } from './utils/base64';
 import { hashCode, hashPassword, verifyPassword } from './utils/crypto';
-import { ensureDailyWordForUser, getWordById } from './words';
+import {
+  bulkCreateWords,
+  createWord,
+  deleteWord,
+  ensureDailyWordForUser,
+  getWordById,
+  listWords,
+  updateWord,
+  WordInput,
+} from './words';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -1551,6 +1560,141 @@ app.get('/api/word/:id', async (c) => {
     return c.json({ error: 'Word not found' }, 404);
   }
   return c.json({ word: { ...word, examples: JSON.parse(word.examples_json) } });
+});
+
+// Admin word management endpoints
+const wordInputSchema = z.object({
+  word: z.string().min(1).max(100),
+  definition: z.string().min(1).max(1000),
+  etymology: z.string().max(500).default(''),
+  pronunciation: z.string().max(100).default(''),
+  examples: z.array(z.string().max(500)).max(5).default([]),
+});
+
+app.get('/api/admin/words', async (c) => {
+  const cookies = parseCookies(c.req.header('cookie') ?? null);
+  const token = cookies.session ?? null;
+  const userId = await getSessionUserId(c.env, token);
+  if (!userId) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const user = await getUserById(c.env, userId);
+  if (!user || user.is_admin !== 1) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+
+  const limit = Math.min(Number(c.req.query('limit')) || 50, 100);
+  const offset = Number(c.req.query('offset')) || 0;
+  const search = c.req.query('search');
+
+  const { words, total } = await listWords(c.env, { limit, offset, search });
+
+  return c.json({
+    words: words.map((w) => ({
+      ...w,
+      examples: JSON.parse(w.examples_json),
+    })),
+    total,
+    limit,
+    offset,
+  });
+});
+
+app.post('/api/admin/words', async (c) => {
+  const cookies = parseCookies(c.req.header('cookie') ?? null);
+  const token = cookies.session ?? null;
+  const userId = await getSessionUserId(c.env, token);
+  if (!userId) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const user = await getUserById(c.env, userId);
+  if (!user || user.is_admin !== 1) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+
+  const body = await c.req.json();
+  const parsed = wordInputSchema.parse(body);
+
+  const word = await createWord(c.env, parsed as WordInput);
+
+  return c.json({
+    word: { ...word, examples: JSON.parse(word.examples_json) },
+  });
+});
+
+app.post('/api/admin/words/bulk', async (c) => {
+  const cookies = parseCookies(c.req.header('cookie') ?? null);
+  const token = cookies.session ?? null;
+  const userId = await getSessionUserId(c.env, token);
+  if (!userId) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const user = await getUserById(c.env, userId);
+  if (!user || user.is_admin !== 1) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+
+  const body = await c.req.json();
+  const wordsArray = z.array(wordInputSchema).min(1).max(500).parse(body.words);
+
+  const result = await bulkCreateWords(c.env, wordsArray as WordInput[]);
+
+  return c.json(result);
+});
+
+app.put('/api/admin/words/:id', async (c) => {
+  const cookies = parseCookies(c.req.header('cookie') ?? null);
+  const token = cookies.session ?? null;
+  const userId = await getSessionUserId(c.env, token);
+  if (!userId) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const user = await getUserById(c.env, userId);
+  if (!user || user.is_admin !== 1) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+
+  const id = Number(c.req.param('id'));
+  if (Number.isNaN(id)) {
+    return c.json({ error: 'Invalid word id' }, 400);
+  }
+
+  const body = await c.req.json();
+  const parsed = wordInputSchema.partial().parse(body);
+
+  const word = await updateWord(c.env, id, parsed as Partial<WordInput>);
+  if (!word) {
+    return c.json({ error: 'Word not found' }, 404);
+  }
+
+  return c.json({
+    word: { ...word, examples: JSON.parse(word.examples_json) },
+  });
+});
+
+app.delete('/api/admin/words/:id', async (c) => {
+  const cookies = parseCookies(c.req.header('cookie') ?? null);
+  const token = cookies.session ?? null;
+  const userId = await getSessionUserId(c.env, token);
+  if (!userId) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const user = await getUserById(c.env, userId);
+  if (!user || user.is_admin !== 1) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+
+  const id = Number(c.req.param('id'));
+  if (Number.isNaN(id)) {
+    return c.json({ error: 'Invalid word id' }, 400);
+  }
+
+  const deleted = await deleteWord(c.env, id);
+  if (!deleted) {
+    return c.json({ error: 'Word not found' }, 404);
+  }
+
+  return c.json({ ok: true });
 });
 
 app.onError((err, c) => {
