@@ -1,3 +1,4 @@
+import { Bell, Eye, ShieldCheck, Users } from 'lucide-react';
 import { useEffect, useState } from 'preact/hooks';
 
 import {
@@ -155,25 +156,25 @@ export function Admin({ user, onUserChange }: AdminProps) {
             <StatsCard
               label="Total Users"
               value={stats?.users.total ?? '-'}
-              icon="👥"
+              icon={<Users size={16} />}
               loading={loading}
             />
             <StatsCard
               label="Authenticated"
               value={stats?.users.authenticated ?? '-'}
-              icon="🔐"
+              icon={<ShieldCheck size={16} />}
               loading={loading}
             />
             <StatsCard
               label="View Rate"
               value={stats ? `${stats.engagement.viewRate}%` : '-'}
-              icon="👁️"
+              icon={<Eye size={16} />}
               loading={loading}
             />
             <StatsCard
               label="Push Subs"
               value={stats?.notifications.pushSubscriptions ?? '-'}
-              icon="🔔"
+              icon={<Bell size={16} />}
               loading={loading}
             />
           </div>

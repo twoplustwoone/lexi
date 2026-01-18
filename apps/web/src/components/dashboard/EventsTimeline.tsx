@@ -1,3 +1,15 @@
+import {
+  BarChart3,
+  BellOff,
+  Download,
+  Eye,
+  Key,
+  LucideIcon,
+  Mail,
+  Smartphone,
+  UserPlus,
+} from 'lucide-react';
+
 interface RecentEvent {
   event_name: string;
   timestamp: string;
@@ -20,16 +32,18 @@ const EVENT_LABELS: Record<string, string> = {
   auth_method_used: 'Sign In',
   notification_disabled: 'Notification Disabled',
   app_installed: 'App Installed',
+  history_opened: 'History Opened',
 };
 
-const EVENT_ICONS: Record<string, string> = {
-  app_open: '📱',
-  word_delivered: '📬',
-  word_viewed: '👁️',
-  account_created: '👤',
-  auth_method_used: '🔑',
-  notification_disabled: '🔕',
-  app_installed: '📥',
+const EVENT_ICONS: Record<string, LucideIcon> = {
+  app_open: Smartphone,
+  word_delivered: Mail,
+  word_viewed: Eye,
+  account_created: UserPlus,
+  auth_method_used: Key,
+  notification_disabled: BellOff,
+  app_installed: Download,
+  history_opened: BarChart3,
 };
 
 function formatEventName(name: string): string {
@@ -49,6 +63,11 @@ function formatEventTime(timestamp: string): string {
   if (diffHours < 24) return `${diffHours}h ago`;
   if (diffDays < 7) return `${diffDays}d ago`;
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function EventIcon({ name, className }: { name: string; className?: string }) {
+  const Icon = EVENT_ICONS[name] || BarChart3;
+  return <Icon className={className} size={14} />;
 }
 
 export function EventsTimeline({
@@ -76,7 +95,7 @@ export function EventsTimeline({
 
   return (
     <div className="rounded-2xl border border-[rgba(30,27,22,0.08)] bg-[rgba(255,252,247,0.7)] p-4">
-      <h3 className="mb-4 text-sm font-semibold text-ink">Event Analytics</h3>
+      <h3 className="mb-4 text-sm font-semibold text-ink">Activity Analytics</h3>
 
       {/* Client breakdown */}
       <div className="mb-4 flex gap-4">
@@ -98,7 +117,7 @@ export function EventsTimeline({
               key={name}
               className="flex items-center gap-1.5 rounded-full border border-[rgba(30,27,22,0.08)] bg-white px-2.5 py-1 text-xs"
             >
-              <span>{EVENT_ICONS[name] || '📊'}</span>
+              <EventIcon name={name} className="text-muted" />
               <span className="text-muted">{formatEventName(name)}:</span>
               <span className="font-semibold text-ink">{count}</span>
             </div>
@@ -108,10 +127,10 @@ export function EventsTimeline({
 
       {/* Recent events timeline */}
       <h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted">
-        Recent Events
+        Recent Activity
       </h4>
       {events.length === 0 ? (
-        <p className="text-sm text-muted">No recent events.</p>
+        <p className="text-sm text-muted">No recent activity.</p>
       ) : (
         <div className="max-h-64 space-y-2 overflow-y-auto">
           {events.slice(0, 15).map((event, index) => (
@@ -120,7 +139,7 @@ export function EventsTimeline({
               className="flex items-center justify-between rounded-lg border border-[rgba(30,27,22,0.05)] bg-white px-3 py-2 text-xs transition-colors hover:bg-surface"
             >
               <div className="flex items-center gap-2">
-                <span>{EVENT_ICONS[event.event_name] || '📊'}</span>
+                <EventIcon name={event.event_name} className="text-muted" />
                 <span className="font-medium text-ink">{formatEventName(event.event_name)}</span>
                 <span
                   className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase ${
@@ -133,7 +152,7 @@ export function EventsTimeline({
                 </span>
               </div>
               <div className="flex items-center gap-3 text-muted">
-                <span className="truncate max-w-[80px]" title={event.user_id}>
+                <span className="max-w-[80px] truncate" title={event.user_id}>
                   {event.user_id.slice(0, 8)}...
                 </span>
                 <span className="whitespace-nowrap">{formatEventTime(event.timestamp)}</span>
