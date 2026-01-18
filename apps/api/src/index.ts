@@ -1395,7 +1395,7 @@ app.get('/api/admin/stats/timeline', async (c) => {
   const days = periodMatch ? Math.min(Number(periodMatch[1]), 365) : 7;
 
   const startDate = DateTime.utc().minus({ days }).startOf('day');
-  const startDateStr = startDate.toISODate();
+  const startDateStr = startDate.toISODate() ?? DateTime.utc().minus({ days: 7 }).toISODate()!;
 
   // User growth over time
   const userGrowthResult = await c.env.DB.prepare(
