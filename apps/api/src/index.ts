@@ -1466,7 +1466,7 @@ app.get('/api/admin/stats/timeline', async (c) => {
   });
 });
 
-app.get('/api/admin/stats/events', async (c) => {
+app.get('/api/admin/stats/activity', async (c) => {
   const cookies = parseCookies(c.req.header('cookie') ?? null);
   const token = cookies.session ?? null;
   const userId = await getSessionUserId(c.env, token);

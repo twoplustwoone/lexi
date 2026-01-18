@@ -381,5 +381,5 @@ export async function fetchAdminTimelineStats(period: string = '7d'): Promise<Ad
 }
 
 export async function fetchAdminEventStats(period: string = '7d'): Promise<AdminEventStats> {
-  return apiFetch<AdminEventStats>(`/admin/stats/events?period=${period}`);
+  return apiFetch<AdminEventStats>(`/admin/stats/activity?period=${period}`);
 }
