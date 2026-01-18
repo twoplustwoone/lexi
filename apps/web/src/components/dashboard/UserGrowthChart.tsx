@@ -1,3 +1,4 @@
+import { useId } from 'preact/hooks';
 import {
   Area,
   AreaChart,
@@ -25,6 +26,9 @@ function formatDate(dateStr: string): string {
 }
 
 export function UserGrowthChart({ data, loading }: UserGrowthChartProps) {
+  const id = useId();
+  const totalGradientId = `total-gradient-${id}`;
+  const authGradientId = `auth-gradient-${id}`;
   if (loading) {
     return (
       <div className="flex h-64 items-center justify-center rounded-2xl border border-[rgba(30,27,22,0.08)] bg-[rgba(255,252,247,0.7)] p-4">
@@ -47,11 +51,11 @@ export function UserGrowthChart({ data, loading }: UserGrowthChartProps) {
       <ResponsiveContainer width="100%" height={220}>
         <AreaChart data={data} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
           <defs>
-            <linearGradient id="totalGradient" x1="0" y1="0" x2="0" y2="1">
+            <linearGradient id={totalGradientId} x1="0" y1="0" x2="0" y2="1">
               <stop offset="5%" stopColor="#8b7355" stopOpacity={0.3} />
               <stop offset="95%" stopColor="#8b7355" stopOpacity={0} />
             </linearGradient>
-            <linearGradient id="authGradient" x1="0" y1="0" x2="0" y2="1">
+            <linearGradient id={authGradientId} x1="0" y1="0" x2="0" y2="1">
               <stop offset="5%" stopColor="#5a8f7b" stopOpacity={0.3} />
               <stop offset="95%" stopColor="#5a8f7b" stopOpacity={0} />
             </linearGradient>
@@ -85,16 +89,20 @@ export function UserGrowthChart({ data, loading }: UserGrowthChartProps) {
             dataKey="total"
             stroke="#8b7355"
             strokeWidth={2}
-            fill="url(#totalGradient)"
+            fill={`url(#${totalGradientId})`}
+            fillOpacity={1}
             name="Total Users"
+            isAnimationActive={false}
           />
           <Area
             type="monotone"
             dataKey="authenticated"
             stroke="#5a8f7b"
             strokeWidth={2}
-            fill="url(#authGradient)"
+            fill={`url(#${authGradientId})`}
+            fillOpacity={1}
             name="Authenticated"
+            isAnimationActive={false}
           />
         </AreaChart>
       </ResponsiveContainer>

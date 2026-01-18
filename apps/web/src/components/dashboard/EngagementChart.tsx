@@ -63,8 +63,20 @@ export function EngagementChart({ data, loading }: EngagementChartProps) {
             }}
             labelFormatter={formatDate}
           />
-          <Bar dataKey="delivered" fill="#8b7355" radius={[4, 4, 0, 0]} name="Delivered" />
-          <Bar dataKey="viewed" fill="#5a8f7b" radius={[4, 4, 0, 0]} name="Viewed" />
+          <Bar
+            dataKey="delivered"
+            fill="#8b7355"
+            radius={[4, 4, 0, 0]}
+            name="Delivered"
+            isAnimationActive={false}
+          />
+          <Bar
+            dataKey="viewed"
+            fill="#5a8f7b"
+            radius={[4, 4, 0, 0]}
+            name="Viewed"
+            isAnimationActive={false}
+          />
         </BarChart>
       </ResponsiveContainer>
       <div className="mt-3 flex justify-center gap-6 text-xs">

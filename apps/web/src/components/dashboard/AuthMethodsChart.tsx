@@ -64,9 +64,10 @@ export function AuthMethodsChart({ data, loading }: AuthMethodsChartProps) {
             dataKey="value"
             stroke="rgba(255,252,247,0.8)"
             strokeWidth={2}
+            isAnimationActive={false}
           >
             {chartData.map((entry, index) => (
-              <Cell key={`cell-${index}`} fill={entry.color} />
+              <Cell key={`cell-${index}`} fill={entry.color} fillOpacity={1} />
             ))}
           </Pie>
           <Tooltip
