@@ -1,4 +1,7 @@
-import { Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
+import { ArcElement, Chart as ChartJS, Legend, Tooltip } from 'chart.js';
+import { Doughnut } from 'react-chartjs-2';
+
+ChartJS.register(ArcElement, Tooltip, Legend);
 
 interface AuthMethodsData {
   password: number;
@@ -32,13 +35,13 @@ export function AuthMethodsChart({ data, loading }: AuthMethodsChartProps) {
     );
   }
 
-  const chartData = [
+  const chartItems = [
     { name: LABELS.password, value: data.password, color: COLORS.password },
     { name: LABELS.google, value: data.google, color: COLORS.google },
     { name: LABELS.emailCode, value: data.emailCode, color: COLORS.emailCode },
   ].filter((item) => item.value > 0);
 
-  const total = chartData.reduce((sum, item) => sum + item.value, 0);
+  const total = chartItems.reduce((sum, item) => sum + item.value, 0);
 
   if (total === 0) {
     return (
@@ -49,46 +52,50 @@ export function AuthMethodsChart({ data, loading }: AuthMethodsChartProps) {
     );
   }
 
+  const chartData = {
+    labels: chartItems.map((item) => item.name),
+    datasets: [
+      {
+        data: chartItems.map((item) => item.value),
+        backgroundColor: chartItems.map((item) => item.color),
+        borderColor: 'rgba(255, 252, 247, 0.8)',
+        borderWidth: 2,
+      },
+    ],
+  };
+
+  const options = {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: false as const,
+    cutout: '60%',
+    plugins: {
+      legend: {
+        position: 'bottom' as const,
+        labels: {
+          color: '#5c574f',
+          font: { size: 12 },
+          padding: 16,
+        },
+      },
+      tooltip: {
+        backgroundColor: 'rgba(255, 252, 247, 0.98)',
+        titleColor: '#1e1b16',
+        bodyColor: '#6f6457',
+        borderColor: 'rgba(30, 27, 22, 0.12)',
+        borderWidth: 1,
+        padding: 12,
+        cornerRadius: 12,
+      },
+    },
+  };
+
   return (
     <div className="rounded-2xl border border-[rgba(30,27,22,0.08)] bg-[rgba(255,252,247,0.7)] p-4">
       <h3 className="mb-2 text-sm font-semibold text-ink">Auth Methods</h3>
-      <ResponsiveContainer width="100%" height={200}>
-        <PieChart>
-          <Pie
-            data={chartData}
-            cx="50%"
-            cy="50%"
-            innerRadius={50}
-            outerRadius={75}
-            paddingAngle={2}
-            dataKey="value"
-            stroke="rgba(255,252,247,0.8)"
-            strokeWidth={2}
-            isAnimationActive={false}
-          >
-            {chartData.map((entry, index) => (
-              <Cell key={`cell-${index}`} fill={entry.color} fillOpacity={1} />
-            ))}
-          </Pie>
-          <Tooltip
-            contentStyle={{
-              backgroundColor: 'rgba(255,252,247,0.98)',
-              border: '1px solid rgba(30,27,22,0.12)',
-              borderRadius: '12px',
-              boxShadow: '0 8px 20px rgba(29,25,18,0.1)',
-              fontSize: '12px',
-            }}
-            formatter={(value) => [String(value ?? 0), 'Users']}
-          />
-          <Legend
-            verticalAlign="bottom"
-            height={36}
-            formatter={(value: string) => (
-              <span style={{ color: '#5c574f', fontSize: '12px' }}>{value}</span>
-            )}
-          />
-        </PieChart>
-      </ResponsiveContainer>
+      <div style={{ height: 200 }}>
+        <Doughnut data={chartData} options={options} />
+      </div>
     </div>
   );
 }

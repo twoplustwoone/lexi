@@ -1,4 +1,14 @@
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import {
+  BarElement,
+  CategoryScale,
+  Chart as ChartJS,
+  Legend,
+  LinearScale,
+  Tooltip,
+} from 'chart.js';
+import { Bar } from 'react-chartjs-2';
+
+ChartJS.register(CategoryScale, LinearScale, BarElement, Tooltip, Legend);
 
 interface EngagementData {
   date: string;
@@ -34,51 +44,77 @@ export function EngagementChart({ data, loading }: EngagementChartProps) {
     );
   }
 
+  const chartData = {
+    labels: data.map((d) => formatDate(d.date)),
+    datasets: [
+      {
+        label: 'Delivered',
+        data: data.map((d) => d.delivered),
+        backgroundColor: '#8b7355',
+        borderRadius: 4,
+      },
+      {
+        label: 'Viewed',
+        data: data.map((d) => d.viewed),
+        backgroundColor: '#5a8f7b',
+        borderRadius: 4,
+      },
+    ],
+  };
+
+  const options = {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: false as const,
+    plugins: {
+      legend: {
+        display: false,
+      },
+      tooltip: {
+        backgroundColor: 'rgba(255, 252, 247, 0.98)',
+        titleColor: '#1e1b16',
+        bodyColor: '#6f6457',
+        borderColor: 'rgba(30, 27, 22, 0.12)',
+        borderWidth: 1,
+        padding: 12,
+        cornerRadius: 12,
+      },
+    },
+    scales: {
+      x: {
+        grid: {
+          display: false,
+        },
+        ticks: {
+          color: '#8c8377',
+          font: { size: 11 },
+        },
+        border: {
+          color: 'rgba(30, 27, 22, 0.12)',
+        },
+      },
+      y: {
+        grid: {
+          color: 'rgba(30, 27, 22, 0.08)',
+        },
+        ticks: {
+          color: '#8c8377',
+          font: { size: 11 },
+          stepSize: 1,
+        },
+        border: {
+          display: false,
+        },
+      },
+    },
+  };
+
   return (
     <div className="rounded-2xl border border-[rgba(30,27,22,0.08)] bg-[rgba(255,252,247,0.7)] p-4">
       <h3 className="mb-4 text-sm font-semibold text-ink">Word Engagement</h3>
-      <ResponsiveContainer width="100%" height={200}>
-        <BarChart data={data} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="rgba(30,27,22,0.08)" vertical={false} />
-          <XAxis
-            dataKey="date"
-            tickFormatter={formatDate}
-            tick={{ fill: '#8c8377', fontSize: 11 }}
-            axisLine={{ stroke: 'rgba(30,27,22,0.12)' }}
-            tickLine={false}
-          />
-          <YAxis
-            tick={{ fill: '#8c8377', fontSize: 11 }}
-            axisLine={false}
-            tickLine={false}
-            allowDecimals={false}
-          />
-          <Tooltip
-            contentStyle={{
-              backgroundColor: 'rgba(255,252,247,0.98)',
-              border: '1px solid rgba(30,27,22,0.12)',
-              borderRadius: '12px',
-              boxShadow: '0 8px 20px rgba(29,25,18,0.1)',
-              fontSize: '12px',
-            }}
-            labelFormatter={formatDate}
-          />
-          <Bar
-            dataKey="delivered"
-            fill="#8b7355"
-            radius={[4, 4, 0, 0]}
-            name="Delivered"
-            isAnimationActive={false}
-          />
-          <Bar
-            dataKey="viewed"
-            fill="#5a8f7b"
-            radius={[4, 4, 0, 0]}
-            name="Viewed"
-            isAnimationActive={false}
-          />
-        </BarChart>
-      </ResponsiveContainer>
+      <div style={{ height: 200 }}>
+        <Bar data={chartData} options={options} />
+      </div>
       <div className="mt-3 flex justify-center gap-6 text-xs">
         <div className="flex items-center gap-2">
           <span className="h-3 w-3 rounded bg-[#8b7355]" />

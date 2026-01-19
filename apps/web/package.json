@@ -15,11 +15,12 @@
   },
   "dependencies": {
     "@word-of-the-day/shared": "file:../../packages/shared",
+    "chart.js": "^4.5.1",
     "idb": "^8.0.0",
     "lucide-react": "^0.562.0",
     "preact": "^10.22.1",
     "preact-router": "^4.1.2",
-    "recharts": "^3.6.0"
+    "react-chartjs-2": "^5.3.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.46.0",

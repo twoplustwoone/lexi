@@ -1,4 +1,16 @@
-import { CartesianGrid, Line, LineChart, Tooltip, XAxis, YAxis } from 'recharts';
+import {
+  CategoryScale,
+  Chart as ChartJS,
+  Filler,
+  Legend,
+  LinearScale,
+  LineElement,
+  PointElement,
+  Tooltip,
+} from 'chart.js';
+import { Line } from 'react-chartjs-2';
+
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Filler, Tooltip, Legend);
 
 interface UserGrowthData {
   date: string;
@@ -33,54 +45,84 @@ export function UserGrowthChart({ data, loading }: UserGrowthChartProps) {
     );
   }
 
+  const chartData = {
+    labels: data.map((d) => formatDate(d.date)),
+    datasets: [
+      {
+        label: 'Total Users',
+        data: data.map((d) => d.total),
+        borderColor: '#8b7355',
+        backgroundColor: 'rgba(139, 115, 85, 0.1)',
+        fill: true,
+        tension: 0.3,
+        pointRadius: 0,
+        pointHoverRadius: 4,
+      },
+      {
+        label: 'Authenticated',
+        data: data.map((d) => d.authenticated),
+        borderColor: '#5a8f7b',
+        backgroundColor: 'rgba(90, 143, 123, 0.1)',
+        fill: true,
+        tension: 0.3,
+        pointRadius: 0,
+        pointHoverRadius: 4,
+      },
+    ],
+  };
+
+  const options = {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: false as const,
+    plugins: {
+      legend: {
+        display: false,
+      },
+      tooltip: {
+        backgroundColor: 'rgba(255, 252, 247, 0.98)',
+        titleColor: '#1e1b16',
+        bodyColor: '#6f6457',
+        borderColor: 'rgba(30, 27, 22, 0.12)',
+        borderWidth: 1,
+        padding: 12,
+        cornerRadius: 12,
+      },
+    },
+    scales: {
+      x: {
+        grid: {
+          display: false,
+        },
+        ticks: {
+          color: '#8c8377',
+          font: { size: 11 },
+        },
+        border: {
+          color: 'rgba(30, 27, 22, 0.12)',
+        },
+      },
+      y: {
+        grid: {
+          color: 'rgba(30, 27, 22, 0.08)',
+        },
+        ticks: {
+          color: '#8c8377',
+          font: { size: 11 },
+          stepSize: 1,
+        },
+        border: {
+          display: false,
+        },
+      },
+    },
+  };
+
   return (
     <div className="rounded-2xl border border-[rgba(30,27,22,0.08)] bg-[rgba(255,252,247,0.7)] p-4">
       <h3 className="mb-4 text-sm font-semibold text-ink">User Growth</h3>
-      <div style={{ width: '100%', height: 220, overflow: 'visible' }}>
-        <LineChart data={data} width={700} height={220} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="rgba(30,27,22,0.08)" vertical={false} />
-          <XAxis
-            dataKey="date"
-            tickFormatter={formatDate}
-            tick={{ fill: '#8c8377', fontSize: 11 }}
-            axisLine={{ stroke: 'rgba(30,27,22,0.12)' }}
-            tickLine={false}
-          />
-          <YAxis
-            tick={{ fill: '#8c8377', fontSize: 11 }}
-            axisLine={false}
-            tickLine={false}
-            allowDecimals={false}
-          />
-          <Tooltip
-            contentStyle={{
-              backgroundColor: 'rgba(255,252,247,0.98)',
-              border: '1px solid rgba(30,27,22,0.12)',
-              borderRadius: '12px',
-              boxShadow: '0 8px 20px rgba(29,25,18,0.1)',
-              fontSize: '12px',
-            }}
-            labelFormatter={formatDate}
-          />
-          <Line
-            type="monotone"
-            dataKey="total"
-            stroke="#8b7355"
-            strokeWidth={2}
-            dot={false}
-            name="Total Users"
-            isAnimationActive={false}
-          />
-          <Line
-            type="monotone"
-            dataKey="authenticated"
-            stroke="#5a8f7b"
-            strokeWidth={2}
-            dot={false}
-            name="Authenticated"
-            isAnimationActive={false}
-          />
-        </LineChart>
+      <div style={{ height: 220 }}>
+        <Line data={chartData} options={options} />
       </div>
       <div className="mt-3 flex justify-center gap-6 text-xs">
         <div className="flex items-center gap-2">
