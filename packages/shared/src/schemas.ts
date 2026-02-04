@@ -34,6 +34,8 @@ export const phoneSchema = z.string().regex(/^\+[1-9]\d{1,14}$/, 'Phone must be 
 
 export const passwordSchema = z.string().min(10);
 
+export const wordDifficultySchema = z.enum(['easy', 'balanced', 'advanced']);
+
 export const eventNameSchema = z.enum([
   'app_installed',
   'auth_flow_completed',
@@ -46,6 +48,8 @@ export const eventNameSchema = z.enum([
   'notification_disabled',
   'account_created',
   'auth_method_used',
+  'preferences_difficulty_changed',
+  'word_selection_fallback_used',
 ]);
 
 export const eventSchema = z.object({
@@ -60,6 +64,11 @@ export const deliverySettingsSchema = z.object({
   enabled: z.boolean(),
   delivery_time: timeThirtyMinuteSchema,
   timezone: timeZoneSchema,
+  word_filters: z
+    .object({
+      difficulty: wordDifficultySchema,
+    })
+    .optional(),
 });
 
 export const pushSubscriptionSchema = z.object({

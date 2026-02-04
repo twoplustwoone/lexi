@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { wordDifficultySchema } from './schemas';
 
 /**
  * Normalized word details format for display
@@ -38,6 +39,13 @@ export const dailyWordResponseSchema = z.object({
   wordPoolId: z.number(),
   detailsStatus: wordDetailsStatusSchema,
   details: wordCardSchema.nullable(),
+  selection: z
+    .object({
+      requestedDifficulty: wordDifficultySchema.nullable(),
+      effectiveDifficulty: wordDifficultySchema.nullable(),
+      usedFallback: z.boolean(),
+    })
+    .optional(),
 });
 
 export type DailyWordResponse = z.infer<typeof dailyWordResponseSchema>;
