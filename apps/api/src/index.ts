@@ -12,6 +12,8 @@ import {
   pushSubscriptionSchema,
   timeZoneSchema,
   uuidSchema,
+  type WordCard,
+  type WordDetailsStatus,
 } from '@word-of-the-day/shared';
 
 import { buildServerEvent, recordEvent } from './analytics';
@@ -45,12 +47,22 @@ import {
   bulkCreateWords,
   createWord,
   deleteWord,
-  ensureDailyWordForUser,
   getWordById,
   listWords,
   updateWord,
   WordInput,
 } from './words';
+import {
+  getDailyWord,
+  getWordPoolById,
+  getWordDetails,
+  banWord,
+  unbanWord,
+  listWordPool,
+  importWords,
+  getEnrichmentStats,
+} from './words/index';
+import { processEnrichmentQueue, triggerSingleEnrichment, EnrichmentService } from './enrichment';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -174,21 +186,69 @@ app.get('/api/word/today', async (c) => {
     return c.json({ error: 'User not found' }, 404);
   }
 
-  const { word, delivered, dateKey } = await ensureDailyWordForUser(c.env, {
-    userId,
-    timezone: user.timezone,
-  });
+  const { getLocalDateKey } = await import('@word-of-the-day/shared');
+  const dateKey = getLocalDateKey(new Date(), user.timezone);
 
-  if (delivered) {
+  // Get or create today's word from the word pool
+  const { wordPoolId } = await getDailyWord(c.env, dateKey);
+  const wordPool = await getWordPoolById(c.env, wordPoolId);
+
+  if (!wordPool) {
+    return c.json({ error: 'Word not found' }, 404);
+  }
+
+  // Get enrichment details
+  const enrichmentService = new EnrichmentService();
+  await enrichmentService.ensureWordDetails(c.env, wordPoolId);
+  const details = await getWordDetails(c.env, wordPoolId);
+
+  const detailsStatus: WordDetailsStatus = (details?.status as WordDetailsStatus) ?? 'pending';
+  let wordCard: WordCard | null = null;
+
+  if (details?.normalized_json) {
+    try {
+      wordCard = JSON.parse(details.normalized_json) as WordCard;
+    } catch {
+      wordCard = null;
+    }
+  }
+
+  // Record delivery for this user (maintain user_words for history)
+  const nowIso = DateTime.utc().toISO();
+  const existingUserWord = await c.env.DB.prepare(
+    'SELECT 1 FROM user_words WHERE user_id = ? AND delivered_on = ?'
+  )
+    .bind(userId, dateKey)
+    .first();
+
+  if (!existingUserWord) {
+    await c.env.DB.prepare(
+      'INSERT OR IGNORE INTO user_words (user_id, word_id, delivered_at, delivered_on) VALUES (?, ?, ?, ?)'
+    )
+      .bind(userId, wordPoolId, nowIso, dateKey)
+      .run();
+
     await recordEvent(
       c.env,
       buildServerEvent({ name: 'word_delivered', userId, metadata: { source: 'app' } })
     );
   }
 
+  // Trigger background enrichment if details are pending
+  if (detailsStatus === 'pending') {
+    // Use waitUntil to enrich in background
+    const ctx = c.executionCtx;
+    if (ctx && 'waitUntil' in ctx) {
+      ctx.waitUntil(triggerSingleEnrichment(c.env, wordPoolId));
+    }
+  }
+
   return c.json({
-    date: dateKey,
-    word: { ...word, examples: JSON.parse(word.examples_json) },
+    day: dateKey,
+    word: wordPool.word,
+    wordPoolId,
+    detailsStatus,
+    details: wordCard,
   });
 });
 
@@ -1555,6 +1615,32 @@ app.get('/api/word/:id', async (c) => {
   if (Number.isNaN(id)) {
     return c.json({ error: 'Invalid word id' }, 400);
   }
+
+  // Try new word_pool first
+  const wordPool = await getWordPoolById(c.env, id);
+  if (wordPool) {
+    const details = await getWordDetails(c.env, id);
+    const detailsStatus: WordDetailsStatus = (details?.status as WordDetailsStatus) ?? 'pending';
+    let wordCard: WordCard | null = null;
+
+    if (details?.normalized_json) {
+      try {
+        wordCard = JSON.parse(details.normalized_json) as WordCard;
+      } catch {
+        wordCard = null;
+      }
+    }
+
+    return c.json({
+      word: wordPool.word,
+      wordPoolId: wordPool.id,
+      enabled: wordPool.enabled === 1,
+      detailsStatus,
+      details: wordCard,
+    });
+  }
+
+  // Fallback to old words table for backward compatibility
   const word = await getWordById(c.env, id);
   if (!word) {
     return c.json({ error: 'Word not found' }, 404);
@@ -1697,6 +1783,181 @@ app.delete('/api/admin/words/:id', async (c) => {
   return c.json({ ok: true });
 });
 
+// Word Pool Admin Endpoints
+
+app.get('/api/admin/word-pool', async (c) => {
+  const cookies = parseCookies(c.req.header('cookie') ?? null);
+  const token = cookies.session ?? null;
+  const userId = await getSessionUserId(c.env, token);
+  if (!userId) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const user = await getUserById(c.env, userId);
+  if (!user || user.is_admin !== 1) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+
+  const limit = Math.min(Number(c.req.query('limit')) || 50, 200);
+  const offset = Number(c.req.query('offset')) || 0;
+  const status = c.req.query('status') as WordDetailsStatus | undefined;
+  const enabledParam = c.req.query('enabled');
+  const enabled = enabledParam === 'true' ? true : enabledParam === 'false' ? false : undefined;
+  const search = c.req.query('search');
+
+  const { words, total } = await listWordPool(c.env, {
+    limit,
+    offset,
+    status,
+    enabled,
+    search,
+  });
+
+  return c.json({
+    words: words.map((w) => ({
+      id: w.id,
+      word: w.word,
+      enabled: w.enabled === 1,
+      tier: w.tier,
+      source: w.source,
+      createdAt: w.created_at,
+      detailsStatus: w.details_status,
+    })),
+    total,
+    limit,
+    offset,
+  });
+});
+
+app.post('/api/admin/word-pool/import', async (c) => {
+  const cookies = parseCookies(c.req.header('cookie') ?? null);
+  const token = cookies.session ?? null;
+  const userId = await getSessionUserId(c.env, token);
+  if (!userId) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const user = await getUserById(c.env, userId);
+  if (!user || user.is_admin !== 1) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+
+  const body = await c.req.json();
+  const parsed = z
+    .object({
+      words: z.array(z.string().min(1).max(50)).min(1).max(5000),
+      source: z.string().min(1).max(50).default('import'),
+    })
+    .parse(body);
+
+  // Filter words: lowercase, alphabetic only, 4-12 chars
+  const filtered = parsed.words
+    .map((w) => w.toLowerCase().trim())
+    .filter((w) => /^[a-z]{4,12}$/.test(w))
+    .filter((v, i, arr) => arr.indexOf(v) === i); // dedupe
+
+  const result = await importWords(c.env, filtered, parsed.source);
+
+  return c.json({
+    ...result,
+    filtered: filtered.length,
+    originalCount: parsed.words.length,
+  });
+});
+
+app.post('/api/admin/word/:id/ban', async (c) => {
+  const cookies = parseCookies(c.req.header('cookie') ?? null);
+  const token = cookies.session ?? null;
+  const userId = await getSessionUserId(c.env, token);
+  if (!userId) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const user = await getUserById(c.env, userId);
+  if (!user || user.is_admin !== 1) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+
+  const id = Number(c.req.param('id'));
+  if (Number.isNaN(id)) {
+    return c.json({ error: 'Invalid word id' }, 400);
+  }
+
+  const success = await banWord(c.env, id);
+  if (!success) {
+    return c.json({ error: 'Word not found' }, 404);
+  }
+
+  return c.json({ ok: true, enabled: false });
+});
+
+app.post('/api/admin/word/:id/unban', async (c) => {
+  const cookies = parseCookies(c.req.header('cookie') ?? null);
+  const token = cookies.session ?? null;
+  const userId = await getSessionUserId(c.env, token);
+  if (!userId) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const user = await getUserById(c.env, userId);
+  if (!user || user.is_admin !== 1) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+
+  const id = Number(c.req.param('id'));
+  if (Number.isNaN(id)) {
+    return c.json({ error: 'Invalid word id' }, 400);
+  }
+
+  const success = await unbanWord(c.env, id);
+  if (!success) {
+    return c.json({ error: 'Word not found' }, 404);
+  }
+
+  return c.json({ ok: true, enabled: true });
+});
+
+app.post('/api/admin/word/:id/retry', async (c) => {
+  const cookies = parseCookies(c.req.header('cookie') ?? null);
+  const token = cookies.session ?? null;
+  const userId = await getSessionUserId(c.env, token);
+  if (!userId) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const user = await getUserById(c.env, userId);
+  if (!user || user.is_admin !== 1) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+
+  const id = Number(c.req.param('id'));
+  if (Number.isNaN(id)) {
+    return c.json({ error: 'Invalid word id' }, 400);
+  }
+
+  const wordPool = await getWordPoolById(c.env, id);
+  if (!wordPool) {
+    return c.json({ error: 'Word not found' }, 404);
+  }
+
+  const enrichmentService = new EnrichmentService();
+  await enrichmentService.resetForRetry(c.env, id);
+
+  return c.json({ ok: true });
+});
+
+app.get('/api/admin/enrichment/stats', async (c) => {
+  const cookies = parseCookies(c.req.header('cookie') ?? null);
+  const token = cookies.session ?? null;
+  const userId = await getSessionUserId(c.env, token);
+  if (!userId) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const user = await getUserById(c.env, userId);
+  if (!user || user.is_admin !== 1) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+
+  const stats = await getEnrichmentStats(c.env);
+
+  return c.json(stats);
+});
+
 app.onError((err, c) => {
   return c.json({ error: err.message ?? 'Server error' }, 500);
 });
@@ -1709,7 +1970,11 @@ export default {
     const runCount = Number((await env.KV.get('cron:run_count')) || 0) + 1;
     await env.KV.put('cron:run_count', String(runCount));
 
+    // Process notification schedules
     ctx.waitUntil(processDueSchedules(env));
+
+    // Process word enrichment queue
+    ctx.waitUntil(processEnrichmentQueue(env));
   },
 };
 
