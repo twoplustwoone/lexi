@@ -4,6 +4,7 @@ import type { WordCard, WordDetailsStatus } from '@word-of-the-day/shared';
 import { fetchTodayWord, markWordViewed, syncHistoryCache, syncSettingsCache } from '../api';
 import { Button } from '../components/Button';
 import { Loader } from '../components/Loader';
+import { canUseSpeechSynthesis, playPronunciation } from '../pronunciation';
 import { getHistory } from '../storage';
 
 interface HomeProps {
@@ -28,6 +29,7 @@ export function Home({ user, onOpenAuth }: HomeProps) {
   const [loading, setLoading] = useState(() => !cachedWord);
   const [error, setError] = useState<string | null>(null);
   const [reminder, setReminder] = useState<string | null>(() => cachedReminder);
+  const [pronunciationMessage, setPronunciationMessage] = useState<string | null>(null);
 
   useEffect(() => {
     const hasCachedWord = cachedWord !== null;
@@ -89,7 +91,7 @@ export function Home({ user, onOpenAuth }: HomeProps) {
             details: {
               word: latest.word,
               phonetics: latest.pronunciation || null,
-              audioUrl: null,
+              audioUrl: latest.audio_url || null,
               meanings: [
                 {
                   partOfSpeech: 'noun',
@@ -165,6 +167,25 @@ export function Home({ user, onOpenAuth }: HomeProps) {
   const phonetics = details?.phonetics || null;
   const audioUrl = details?.audioUrl || null;
   const etymology = details?.etymology || null;
+  const pronunciationUnavailable = !audioUrl && !canUseSpeechSynthesis();
+
+  const handlePlayPronunciation = async () => {
+    setPronunciationMessage(null);
+    const result = await playPronunciation({
+      text: word.word,
+      audioUrl,
+    });
+
+    if (result.status === 'unsupported') {
+      setPronunciationMessage('Pronunciation is unavailable (Samantha voice not found).');
+      return;
+    }
+
+    if (result.status === 'error') {
+      setPronunciationMessage(result.message);
+      return;
+    }
+  };
 
   // Render word details based on status
   const renderDetails = () => {
@@ -228,35 +249,39 @@ export function Home({ user, onOpenAuth }: HomeProps) {
           {phonetics && (
             <div className="flex items-center gap-2">
               <p className="text-sm text-muted">{phonetics}</p>
-              {audioUrl && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    const audio = new Audio(audioUrl);
-                    void audio.play();
-                  }}
-                  className="text-muted hover:text-foreground transition-colors"
-                  aria-label="Play pronunciation"
+              <button
+                type="button"
+                onClick={() => void handlePlayPronunciation()}
+                disabled={pronunciationUnavailable}
+                className="text-muted transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+                aria-label="Play pronunciation"
+                title={
+                  pronunciationUnavailable
+                    ? 'Pronunciation is unavailable (speech synthesis not supported).'
+                    : 'Play pronunciation'
+                }
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
                 >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-                    <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
-                  </svg>
-                </button>
-              )}
+                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                  <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                  <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+                </svg>
+              </button>
             </div>
           )}
+          {pronunciationMessage ? (
+            <p className="text-xs text-accent-strong">{pronunciationMessage}</p>
+          ) : null}
         </header>
         {renderDetails()}
       </article>

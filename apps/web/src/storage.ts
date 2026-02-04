@@ -8,6 +8,7 @@ export interface HistoryEntry {
   definition: string;
   etymology: string;
   pronunciation: string;
+  audio_url?: string | null;
   examples: string[];
 }
 

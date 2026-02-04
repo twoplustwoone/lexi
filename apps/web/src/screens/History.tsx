@@ -4,6 +4,7 @@ import { fetchHistory, getClientType, trackEvent } from '../api';
 import { HistoryEntry, getHistory, saveHistory } from '../storage';
 import { getAnonymousId } from '../identity';
 import { Loader } from '../components/Loader';
+import { canUseSpeechSynthesis, playPronunciation } from '../pronunciation';
 
 interface HistoryProps {
   path?: string;
@@ -15,6 +16,11 @@ let cachedHistory: HistoryEntry[] | null = null;
 export function History({ user }: HistoryProps) {
   const [history, setHistory] = useState<HistoryEntry[]>(() => cachedHistory ?? []);
   const [loading, setLoading] = useState(() => cachedHistory === null);
+  const [pronunciationMessage, setPronunciationMessage] = useState<{
+    wordId: number;
+    message: string;
+  } | null>(null);
+  const supportsSpeechSynthesis = canUseSpeechSynthesis();
 
   useEffect(() => {
     const hasCachedHistory = cachedHistory !== null;
@@ -46,6 +52,30 @@ export function History({ user }: HistoryProps) {
       client: getClientType(),
     });
   }, []);
+
+  const handlePlayPronunciation = async (entry: HistoryEntry) => {
+    setPronunciationMessage(null);
+    const result = await playPronunciation({
+      text: entry.word,
+      audioUrl: entry.audio_url ?? null,
+    });
+
+    if (result.status === 'unsupported') {
+      setPronunciationMessage({
+        wordId: entry.word_id,
+        message: 'Pronunciation is unavailable (Samantha voice not found).',
+      });
+      return;
+    }
+
+    if (result.status === 'error') {
+      setPronunciationMessage({
+        wordId: entry.word_id,
+        message: result.message,
+      });
+      return;
+    }
+  };
 
   const cardBase =
     'rounded-[20px] border border-[rgba(30,27,22,0.12)] bg-card shadow-[0_18px_40px_rgba(29,25,18,0.12)] animate-[fade-up_0.5s_ease_both] motion-reduce:animate-none';
@@ -81,7 +111,40 @@ export function History({ user }: HistoryProps) {
               <span className="text-muted">{entry.definition}</span>
             </summary>
             <div className="border-t border-[rgba(30,27,22,0.12)] px-6 pb-6 pt-4">
-              <p className="text-sm text-muted">{entry.pronunciation}</p>
+              <div className="flex items-center gap-2">
+                <p className="text-sm text-muted">{entry.pronunciation}</p>
+                <button
+                  type="button"
+                  onClick={() => void handlePlayPronunciation(entry)}
+                  disabled={!entry.audio_url && !supportsSpeechSynthesis}
+                  className="text-muted transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+                  aria-label={`Play pronunciation for ${entry.word}`}
+                  title={
+                    !entry.audio_url && !supportsSpeechSynthesis
+                      ? 'Pronunciation is unavailable (speech synthesis not supported).'
+                      : 'Play pronunciation'
+                  }
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                    <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+                  </svg>
+                </button>
+              </div>
+              {pronunciationMessage?.wordId === entry.word_id ? (
+                <p className="mt-1 text-xs text-accent-strong">{pronunciationMessage.message}</p>
+              ) : null}
               <div className="mt-4">
                 <h4 className="text-sm uppercase tracking-[0.08em] text-muted">Definition</h4>
                 <p>{entry.definition}</p>
