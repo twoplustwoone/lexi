@@ -62,6 +62,12 @@ export function Settings({ user }: SettingsProps) {
     'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
   const getErrorMessage = (error: unknown, fallback: string) =>
     error instanceof Error ? error.message : fallback;
+  const applySettings = (settings: SettingsState) => {
+    cachedSettings = settings;
+    setEnabled(settings.schedule.enabled);
+    setDeliveryTime(settings.schedule.delivery_time);
+    setTimezone(settings.schedule.timezone);
+  };
   const validateDeliveryTime = () => {
     if (isThirtyMinuteTime(deliveryTime)) {
       return true;
@@ -78,10 +84,7 @@ export function Settings({ user }: SettingsProps) {
       }
       try {
         const settings = await syncSettingsCache();
-        cachedSettings = settings;
-        setEnabled(settings.schedule.enabled);
-        setDeliveryTime(settings.schedule.delivery_time);
-        setTimezone(settings.schedule.timezone);
+        applySettings(settings);
       } finally {
         if (!hasCachedSettings) {
           setLoading(false);
@@ -158,10 +161,7 @@ export function Settings({ user }: SettingsProps) {
 
       await updateSettingsRemote({ enabled: nextEnabled, delivery_time: deliveryTime, timezone });
       const updated = await syncSettingsCache();
-      cachedSettings = updated;
-      setEnabled(updated.schedule.enabled);
-      setDeliveryTime(updated.schedule.delivery_time);
-      setTimezone(updated.schedule.timezone);
+      applySettings(updated);
     } catch (error: unknown) {
       setMessage(getErrorMessage(error, 'Unable to update notification settings.'));
     } finally {
@@ -179,10 +179,7 @@ export function Settings({ user }: SettingsProps) {
     try {
       await updateSettingsRemote({ enabled, delivery_time: deliveryTime, timezone });
       const updated = await syncSettingsCache();
-      cachedSettings = updated;
-      setEnabled(updated.schedule.enabled);
-      setDeliveryTime(updated.schedule.delivery_time);
-      setTimezone(updated.schedule.timezone);
+      applySettings(updated);
       setMessage('Saved. Changes apply next day.');
     } catch (error: unknown) {
       setMessage(getErrorMessage(error, 'Unable to save settings.'));
@@ -254,22 +251,6 @@ export function Settings({ user }: SettingsProps) {
           {isSaving ? <Loader label="Saving..." tone="light" /> : 'Save settings'}
         </Button>
       </form>
-
-      <div className={`${cardBase} p-6`}>
-        <h2 className="font-[var(--font-display)] text-2xl">Word preferences</h2>
-        <p className="mt-1 text-muted">Coming soon - choose difficulty, themes, or languages.</p>
-        <div className="mt-4 grid grid-cols-[repeat(auto-fit,minmax(120px,1fr))] gap-3">
-          <div className="rounded-xl border border-dashed border-[rgba(30,27,22,0.12)] p-3 text-sm text-muted">
-            Difficulty
-          </div>
-          <div className="rounded-xl border border-dashed border-[rgba(30,27,22,0.12)] p-3 text-sm text-muted">
-            Theme
-          </div>
-          <div className="rounded-xl border border-dashed border-[rgba(30,27,22,0.12)] p-3 text-sm text-muted">
-            Language
-          </div>
-        </div>
-      </div>
     </section>
   );
 }
