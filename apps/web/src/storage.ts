@@ -4,6 +4,7 @@ import type { PreferencesV1 } from '@word-of-the-day/shared';
 export interface HistoryEntry {
   word_id: number;
   delivered_at: string;
+  delivered_on?: string;
   viewed_at: string | null;
   word: string;
   definition: string;

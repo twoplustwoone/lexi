@@ -298,7 +298,7 @@ app.get('/api/history', async (c) => {
   }
   // Query handles both old words table and new word_pool/word_details tables
   const result = await c.env.DB.prepare(
-    `SELECT uw.word_id, uw.delivered_at, uw.viewed_at,
+    `SELECT uw.word_id, uw.delivered_at, uw.delivered_on, uw.viewed_at,
             COALESCE(wp.word, w.word) as word,
             COALESCE(
               json_extract(wd.normalized_json, '$.meanings[0].definitions[0]'),
@@ -316,7 +316,7 @@ app.get('/api/history', async (c) => {
      LEFT JOIN word_pool wp ON uw.word_id = wp.id
      LEFT JOIN word_details wd ON wp.id = wd.word_pool_id
      WHERE uw.user_id = ?
-     ORDER BY uw.delivered_at DESC`
+     ORDER BY uw.delivered_on DESC, uw.delivered_at DESC`
   )
     .bind(userId)
     .all();
@@ -337,6 +337,7 @@ app.get('/api/history', async (c) => {
     return {
       word_id: row.word_id,
       delivered_at: row.delivered_at,
+      delivered_on: row.delivered_on,
       viewed_at: row.viewed_at,
       word: row.word,
       definition: row.definition,

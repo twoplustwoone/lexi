@@ -13,6 +13,36 @@ interface HistoryProps {
 
 let cachedHistory: HistoryEntry[] | null = null;
 
+function formatHistoryDate(entry: HistoryEntry): string {
+  if (entry.delivered_on) {
+    const [year, month, day] = entry.delivered_on.split('-').map(Number);
+    if (
+      Number.isFinite(year) &&
+      Number.isFinite(month) &&
+      Number.isFinite(day) &&
+      month >= 1 &&
+      month <= 12 &&
+      day >= 1 &&
+      day <= 31
+    ) {
+      return new Date(year, month - 1, day).toLocaleDateString();
+    }
+  }
+  return new Date(entry.delivered_at).toLocaleDateString();
+}
+
+function sortHistoryEntries(entries: HistoryEntry[]): HistoryEntry[] {
+  return [...entries].sort((a, b) => {
+    const dateKeyA = a.delivered_on ?? a.delivered_at;
+    const dateKeyB = b.delivered_on ?? b.delivered_at;
+    const byDay = dateKeyB.localeCompare(dateKeyA);
+    if (byDay !== 0) {
+      return byDay;
+    }
+    return b.delivered_at.localeCompare(a.delivered_at);
+  });
+}
+
 export function History({ user }: HistoryProps) {
   const [history, setHistory] = useState<HistoryEntry[]>(() => cachedHistory ?? []);
   const [loading, setLoading] = useState(() => cachedHistory === null);
@@ -30,12 +60,13 @@ export function History({ user }: HistoryProps) {
       }
       try {
         const remote = await fetchHistory();
-        await saveHistory(remote);
-        cachedHistory = remote;
-        setHistory(remote);
+        const sorted = sortHistoryEntries(remote);
+        await saveHistory(sorted);
+        cachedHistory = sorted;
+        setHistory(sorted);
       } catch {
         const cached = await getHistory();
-        const sorted = cached.sort((a, b) => b.delivered_at.localeCompare(a.delivered_at));
+        const sorted = sortHistoryEntries(cached);
         cachedHistory = sorted;
         setHistory(sorted);
       } finally {
@@ -105,7 +136,7 @@ export function History({ user }: HistoryProps) {
           <details className={`${cardBase} group p-0`} key={entry.word_id}>
             <summary className="relative flex cursor-pointer list-none flex-col gap-1 px-6 py-6 pr-12 focus-visible:rounded-[14px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-4 after:absolute after:right-6 after:top-6 after:text-xl after:text-muted after:content-['+'] group-open:after:content-['-']">
               <span className="text-xs uppercase tracking-[0.2em] text-muted">
-                {new Date(entry.delivered_at).toLocaleDateString()}
+                {formatHistoryDate(entry)}
               </span>
               <span className="font-[var(--font-display)] text-lg">{entry.word}</span>
               <span className="text-muted">{entry.definition}</span>
