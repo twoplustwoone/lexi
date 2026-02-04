@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'preact/hooks';
+import type { WordCard, WordDetailsStatus } from '@word-of-the-day/shared';
 
 import { fetchTodayWord, markWordViewed, syncHistoryCache, syncSettingsCache } from '../api';
 import { Button } from '../components/Button';
@@ -12,13 +13,11 @@ interface HomeProps {
 }
 
 type WordDisplay = {
-  id?: number;
+  wordPoolId: number;
   word: string;
-  definition: string;
-  etymology: string;
-  pronunciation: string;
-  examples: string[];
   date: string;
+  detailsStatus: WordDetailsStatus;
+  details: WordCard | null;
 };
 
 let cachedWord: WordDisplay | null = null;
@@ -39,16 +38,68 @@ export function Home({ user, onOpenAuth }: HomeProps) {
       }
       try {
         const today = await fetchTodayWord();
-        const nextWord = { ...today.word, date: today.date };
+        const nextWord: WordDisplay = {
+          wordPoolId: today.wordPoolId,
+          word: today.word,
+          date: today.day,
+          detailsStatus: today.detailsStatus,
+          details: today.details,
+        };
         cachedWord = nextWord;
         setWord(nextWord);
-        await markWordViewed(today.word.id);
+        await markWordViewed(today.wordPoolId);
         await syncHistoryCache();
+
+        // If details are pending, poll for updates
+        if (today.detailsStatus === 'pending') {
+          const pollForDetails = async () => {
+            await new Promise((resolve) => setTimeout(resolve, 3000));
+            try {
+              const updated = await fetchTodayWord();
+              if (updated.detailsStatus === 'ready' && updated.details) {
+                const updatedWord: WordDisplay = {
+                  wordPoolId: updated.wordPoolId,
+                  word: updated.word,
+                  date: updated.day,
+                  detailsStatus: updated.detailsStatus,
+                  details: updated.details,
+                };
+                cachedWord = updatedWord;
+                setWord(updatedWord);
+              } else if (updated.detailsStatus === 'pending') {
+                // Continue polling
+                void pollForDetails();
+              }
+            } catch {
+              // Stop polling on error
+            }
+          };
+          void pollForDetails();
+        }
       } catch {
         const cached = await getHistory();
         if (cached.length) {
           const latest = cached.sort((a, b) => b.delivered_at.localeCompare(a.delivered_at))[0];
-          const nextWord = { ...latest, date: latest.delivered_at };
+          // Convert legacy history format to new display format
+          const nextWord: WordDisplay = {
+            wordPoolId: latest.word_id,
+            word: latest.word,
+            date: latest.delivered_at,
+            detailsStatus: 'ready',
+            details: {
+              word: latest.word,
+              phonetics: latest.pronunciation || null,
+              audioUrl: null,
+              meanings: [
+                {
+                  partOfSpeech: 'noun',
+                  definitions: [latest.definition],
+                  examples: latest.examples || [],
+                },
+              ],
+              etymology: latest.etymology || null,
+            },
+          };
           cachedWord = nextWord;
           setWord(nextWord);
         } else if (!cachedWord) {
@@ -109,6 +160,60 @@ export function Home({ user, onOpenAuth }: HomeProps) {
     return <div className={`${cardBase} p-6`}>No word available yet.</div>;
   }
 
+  // Extract display data from word details
+  const details = word.details;
+  const phonetics = details?.phonetics || null;
+  const audioUrl = details?.audioUrl || null;
+  const etymology = details?.etymology || null;
+
+  // Render word details based on status
+  const renderDetails = () => {
+    if (word.detailsStatus === 'pending') {
+      return (
+        <div className="mt-5 flex items-center gap-2 text-muted">
+          <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+          <span>Loading definition...</span>
+        </div>
+      );
+    }
+
+    if (word.detailsStatus === 'failed' || word.detailsStatus === 'not_found') {
+      return <div className="mt-5 text-muted italic">Definition not available for this word.</div>;
+    }
+
+    if (!details) {
+      return null;
+    }
+
+    return (
+      <>
+        {details.meanings?.map((meaning, idx) => (
+          <div key={idx} className="mt-5 space-y-2">
+            <h2 className="text-xs uppercase tracking-[0.08em] text-muted">
+              {meaning.partOfSpeech}
+            </h2>
+            <ul className="list-disc space-y-1 pl-5">
+              {meaning.definitions.slice(0, 3).map((def, defIdx) => (
+                <li key={defIdx}>{def}</li>
+              ))}
+            </ul>
+            {meaning.examples && meaning.examples.length > 0 && (
+              <div className="mt-2 pl-5">
+                <p className="text-sm italic text-muted">"{meaning.examples[0]}"</p>
+              </div>
+            )}
+          </div>
+        ))}
+        {etymology && (
+          <div className="mt-5 space-y-2">
+            <h2 className="text-xs uppercase tracking-[0.08em] text-muted">Etymology</h2>
+            <p>{etymology}</p>
+          </div>
+        )}
+      </>
+    );
+  };
+
   return (
     <section className="grid gap-5">
       {reminder ? (
@@ -120,24 +225,40 @@ export function Home({ user, onOpenAuth }: HomeProps) {
         <header className="space-y-1">
           <p className="text-xs uppercase tracking-[0.2em] text-muted">Today's word</p>
           <h1 className="font-[var(--font-display)] text-4xl">{word.word}</h1>
-          <p className="text-sm text-muted">{word.pronunciation}</p>
+          {phonetics && (
+            <div className="flex items-center gap-2">
+              <p className="text-sm text-muted">{phonetics}</p>
+              {audioUrl && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const audio = new Audio(audioUrl);
+                    void audio.play();
+                  }}
+                  className="text-muted hover:text-foreground transition-colors"
+                  aria-label="Play pronunciation"
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                    <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+                  </svg>
+                </button>
+              )}
+            </div>
+          )}
         </header>
-        <div className="mt-5 space-y-2">
-          <h2 className="text-xs uppercase tracking-[0.08em] text-muted">Definition</h2>
-          <p>{word.definition}</p>
-        </div>
-        <div className="mt-5 space-y-2">
-          <h2 className="text-xs uppercase tracking-[0.08em] text-muted">Etymology</h2>
-          <p>{word.etymology}</p>
-        </div>
-        <div className="mt-5 space-y-2">
-          <h2 className="text-xs uppercase tracking-[0.08em] text-muted">Examples</h2>
-          <ul className="list-disc space-y-1 pl-5">
-            {(Array.isArray(word.examples) ? word.examples : []).map((example: string) => (
-              <li key={example}>{example}</li>
-            ))}
-          </ul>
-        </div>
+        {renderDetails()}
       </article>
       <div
         className={`${cardBase} flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between`}

@@ -1,4 +1,4 @@
-import { eventSchema } from '@word-of-the-day/shared';
+import { eventSchema, type WordCard, type WordDetailsStatus } from '@word-of-the-day/shared';
 
 import {
   HistoryEntry,
@@ -13,16 +13,36 @@ import { getAnonymousId, getTimeZone, setAnonymousId } from './identity';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
 
+/**
+ * Legacy word format (for backward compatibility with history)
+ */
+export interface LegacyWordData {
+  id: number;
+  word: string;
+  definition: string;
+  etymology: string;
+  pronunciation: string;
+  examples: string[];
+}
+
+/**
+ * New daily word response from /api/word/today
+ */
+export interface DailyWordPayload {
+  day: string;
+  word: string;
+  wordPoolId: number;
+  detailsStatus: WordDetailsStatus;
+  details: WordCard | null;
+}
+
+/**
+ * Legacy word payload (for backward compatibility)
+ * @deprecated Use DailyWordPayload instead
+ */
 export interface WordPayload {
   date: string;
-  word: {
-    id: number;
-    word: string;
-    definition: string;
-    etymology: string;
-    pronunciation: string;
-    examples: string[];
-  };
+  word: LegacyWordData;
 }
 
 export interface AuthMethodsResponse {
@@ -107,8 +127,8 @@ export async function fetchMe(): Promise<{
   return apiFetch('/me');
 }
 
-export async function fetchTodayWord(): Promise<WordPayload> {
-  return apiFetch<WordPayload>('/word/today');
+export async function fetchTodayWord(): Promise<DailyWordPayload> {
+  return apiFetch<DailyWordPayload>('/word/today');
 }
 
 export async function fetchHistory(): Promise<HistoryEntry[]> {
