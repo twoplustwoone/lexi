@@ -277,26 +277,56 @@ app.get('/api/history', async (c) => {
   if (!userId) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
+  // Query handles both old words table and new word_pool/word_details tables
   const result = await c.env.DB.prepare(
-    `SELECT uw.word_id, uw.delivered_at, uw.viewed_at, w.word, w.definition, w.etymology, w.pronunciation, w.examples_json
+    `SELECT uw.word_id, uw.delivered_at, uw.viewed_at,
+            COALESCE(wp.word, w.word) as word,
+            COALESCE(
+              json_extract(wd.normalized_json, '$.meanings[0].definitions[0]'),
+              w.definition
+            ) as definition,
+            COALESCE(json_extract(wd.normalized_json, '$.etymology'), w.etymology) as etymology,
+            COALESCE(json_extract(wd.normalized_json, '$.phonetics'), w.pronunciation) as pronunciation,
+            json_extract(wd.normalized_json, '$.audioUrl') as audio_url,
+            COALESCE(
+              json_extract(wd.normalized_json, '$.meanings[0].examples'),
+              w.examples_json
+            ) as examples_json
      FROM user_words uw
-     JOIN words w ON uw.word_id = w.id
+     LEFT JOIN words w ON uw.word_id = w.id
+     LEFT JOIN word_pool wp ON uw.word_id = wp.id
+     LEFT JOIN word_details wd ON wp.id = wd.word_pool_id
      WHERE uw.user_id = ?
      ORDER BY uw.delivered_at DESC`
   )
     .bind(userId)
     .all();
 
-  const history = result.results.map((row) => ({
-    word_id: row.word_id,
-    delivered_at: row.delivered_at,
-    viewed_at: row.viewed_at,
-    word: row.word,
-    definition: row.definition,
-    etymology: row.etymology,
-    pronunciation: row.pronunciation,
-    examples: JSON.parse(row.examples_json as string),
-  }));
+  const history = result.results.map((row) => {
+    let examples: string[] = [];
+    if (row.examples_json) {
+      try {
+        const parsed = JSON.parse(row.examples_json as string);
+        // Handle both array of strings and array of objects with 'sentence' field
+        if (Array.isArray(parsed)) {
+          examples = parsed.map((e) => (typeof e === 'string' ? e : (e?.sentence ?? String(e))));
+        }
+      } catch {
+        examples = [];
+      }
+    }
+    return {
+      word_id: row.word_id,
+      delivered_at: row.delivered_at,
+      viewed_at: row.viewed_at,
+      word: row.word,
+      definition: row.definition,
+      etymology: row.etymology,
+      pronunciation: row.pronunciation,
+      audio_url: typeof row.audio_url === 'string' ? row.audio_url : null,
+      examples,
+    };
+  });
 
   return c.json({ history });
 });
