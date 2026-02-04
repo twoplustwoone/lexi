@@ -1,4 +1,9 @@
-import { eventSchema, type WordCard, type WordDetailsStatus } from '@word-of-the-day/shared';
+import {
+  eventSchema,
+  type WordCard,
+  type WordDetailsStatus,
+  type WordDifficulty,
+} from '@word-of-the-day/shared';
 
 import {
   HistoryEntry,
@@ -34,6 +39,11 @@ export interface DailyWordPayload {
   wordPoolId: number;
   detailsStatus: WordDetailsStatus;
   details: WordCard | null;
+  selection?: {
+    requestedDifficulty: WordDifficulty | null;
+    effectiveDifficulty: WordDifficulty | null;
+    usedFallback: boolean;
+  };
 }
 
 /**
@@ -148,6 +158,9 @@ export async function updateSettingsRemote(payload: {
   enabled: boolean;
   delivery_time: string;
   timezone: string;
+  word_filters?: {
+    difficulty: WordDifficulty;
+  };
 }): Promise<void> {
   await apiFetch('/settings', { method: 'PUT', body: JSON.stringify(payload) });
 }

@@ -1,12 +1,24 @@
 import { expect, test, type Page } from '@playwright/test';
 
-const defaultWord = {
-  id: 1,
+const defaultTodayWord = {
+  day: '2024-01-02',
   word: 'luminary',
-  definition: 'A person who inspires or influences others.',
-  etymology: 'From Latin lumen, meaning light.',
-  pronunciation: 'LOO-muh-nair-ee',
-  examples: ['She is a luminary in the design world.'],
+  wordPoolId: 1,
+  detailsStatus: 'ready' as const,
+  details: {
+    word: 'luminary',
+    phonetics: 'LOO-muh-nair-ee',
+    audioUrl: null,
+    meanings: [
+      {
+        partOfSpeech: 'noun',
+        definitions: ['A person who inspires or influences others.'],
+        examples: ['She is a luminary in the design world.'],
+      },
+    ],
+    etymology: 'From Latin lumen, meaning light.',
+    sourceUrl: null,
+  },
 };
 
 const defaultHistory = [
@@ -42,6 +54,9 @@ const defaultSettings = {
     version: 1,
     notification_enabled: false,
     delivery_time: '09:00',
+    word_filters: {
+      difficulty: 'balanced',
+    },
   },
 };
 
@@ -56,14 +71,14 @@ type ApiOverrides = {
   me?: Partial<typeof defaultMe>;
   settings?: typeof defaultSettings;
   history?: typeof defaultHistory;
-  word?: typeof defaultWord;
+  word?: typeof defaultTodayWord;
 };
 
 async function mockApi(page: Page, overrides: ApiOverrides = {}) {
   const me = { ...defaultMe, ...(overrides.me ?? {}) };
   const settings = overrides.settings ?? defaultSettings;
   const history = overrides.history ?? defaultHistory;
-  const word = overrides.word ?? defaultWord;
+  const word = overrides.word ?? defaultTodayWord;
 
   await page.route('**/api/**', async (route) => {
     const request = route.request();
@@ -85,7 +100,7 @@ async function mockApi(page: Page, overrides: ApiOverrides = {}) {
     }
 
     if (pathname === '/api/word/today') {
-      await route.fulfill({ json: { date: '2024-01-02', word } });
+      await route.fulfill({ json: word });
       return;
     }
 
@@ -141,8 +156,8 @@ test("renders the home view with today's word", async ({ page }) => {
   await page.goto('/');
   await expect(page.getByText('Lexi')).toBeVisible();
   await expect(page.getByText("Today's word")).toBeVisible();
-  await expect(page.getByText(defaultWord.word)).toBeVisible();
-  await expect(page.getByText(defaultWord.definition)).toBeVisible();
+  await expect(page.getByText(defaultTodayWord.word)).toBeVisible();
+  await expect(page.getByText(defaultTodayWord.details.meanings[0].definitions[0])).toBeVisible();
 });
 
 test('shows collapsible history entries', async ({ page }) => {
@@ -169,8 +184,12 @@ test('saves updated delivery time in settings', async ({ page }) => {
   );
   await page.getByRole('button', { name: 'Save settings' }).click();
   const request = await requestPromise;
-  const payload = request.postDataJSON() as { delivery_time: string };
+  const payload = request.postDataJSON() as {
+    delivery_time: string;
+    word_filters?: { difficulty?: string };
+  };
   expect(payload.delivery_time).toBe('10:30');
+  expect(payload.word_filters?.difficulty).toBe('balanced');
   await expect(page.getByText('Saved. Changes apply next day.')).toBeVisible();
 });
 

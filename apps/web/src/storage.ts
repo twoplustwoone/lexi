@@ -1,4 +1,5 @@
 import { openDB } from 'idb';
+import type { PreferencesV1 } from '@word-of-the-day/shared';
 
 export interface HistoryEntry {
   word_id: number;
@@ -18,11 +19,7 @@ export interface SettingsState {
     delivery_time: string;
     timezone: string;
   };
-  preferences: {
-    version: number;
-    notification_enabled: boolean;
-    delivery_time: string;
-  };
+  preferences: PreferencesV1;
 }
 
 const DB_NAME = 'wotd';

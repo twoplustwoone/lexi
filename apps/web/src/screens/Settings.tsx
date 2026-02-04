@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 
-import { isThirtyMinuteTime } from '@word-of-the-day/shared';
+import { isThirtyMinuteTime, type WordDifficulty } from '@word-of-the-day/shared';
 
 import {
   fetchVapidKey,
@@ -20,6 +20,45 @@ interface SettingsProps {
   path?: string;
   user: { userId: string | null };
 }
+
+const difficultyOptions: Array<{
+  value: WordDifficulty;
+  label: string;
+  description: string;
+}> = [
+  { value: 'easy', label: 'Easy', description: 'More common words' },
+  { value: 'balanced', label: 'Balanced', description: 'A mix of common and uncommon words' },
+  { value: 'advanced', label: 'Advanced', description: 'Rarer and more challenging words' },
+];
+
+const fallbackTimeZones = [
+  'UTC',
+  'America/New_York',
+  'America/Chicago',
+  'America/Denver',
+  'America/Los_Angeles',
+  'America/Anchorage',
+  'Pacific/Honolulu',
+  'Europe/London',
+  'Europe/Paris',
+  'Asia/Tokyo',
+];
+
+function getSupportedTimeZones(): string[] {
+  const intlWithSupport = Intl as typeof Intl & {
+    supportedValuesOf?: (key: string) => string[];
+  };
+  if (typeof intlWithSupport.supportedValuesOf === 'function') {
+    try {
+      return intlWithSupport.supportedValuesOf('timeZone');
+    } catch {
+      return fallbackTimeZones;
+    }
+  }
+  return fallbackTimeZones;
+}
+
+const supportedTimeZones = getSupportedTimeZones();
 
 function urlBase64ToUint8Array(base64String: string) {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
@@ -51,6 +90,9 @@ export function Settings({ user }: SettingsProps) {
   const [deliveryTime, setDeliveryTime] = useState(
     () => cachedSettings?.schedule.delivery_time ?? '09:00'
   );
+  const [difficulty, setDifficulty] = useState<WordDifficulty>(
+    () => cachedSettings?.preferences.word_filters?.difficulty ?? 'balanced'
+  );
   const [timezone, setTimezone] = useState(
     () => cachedSettings?.schedule.timezone ?? getTimeZone()
   );
@@ -62,10 +104,14 @@ export function Settings({ user }: SettingsProps) {
     'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
   const getErrorMessage = (error: unknown, fallback: string) =>
     error instanceof Error ? error.message : fallback;
+  const timeZoneOptions = supportedTimeZones.includes(timezone)
+    ? supportedTimeZones
+    : [timezone, ...supportedTimeZones];
   const applySettings = (settings: SettingsState) => {
     cachedSettings = settings;
     setEnabled(settings.schedule.enabled);
     setDeliveryTime(settings.schedule.delivery_time);
+    setDifficulty(settings.preferences.word_filters?.difficulty ?? 'balanced');
     setTimezone(settings.schedule.timezone);
   };
   const validateDeliveryTime = () => {
@@ -110,7 +156,12 @@ export function Settings({ user }: SettingsProps) {
         const permission = await Notification.requestPermission();
         if (permission !== 'granted') {
           setMessage('Notification permission was denied.');
-          await updateSettingsRemote({ enabled: false, delivery_time: deliveryTime, timezone });
+          await updateSettingsRemote({
+            enabled: false,
+            delivery_time: deliveryTime,
+            timezone,
+            word_filters: { difficulty },
+          });
           setEnabled(false);
           return;
         }
@@ -159,7 +210,12 @@ export function Settings({ user }: SettingsProps) {
         }
       }
 
-      await updateSettingsRemote({ enabled: nextEnabled, delivery_time: deliveryTime, timezone });
+      await updateSettingsRemote({
+        enabled: nextEnabled,
+        delivery_time: deliveryTime,
+        timezone,
+        word_filters: { difficulty },
+      });
       const updated = await syncSettingsCache();
       applySettings(updated);
     } catch (error: unknown) {
@@ -177,7 +233,12 @@ export function Settings({ user }: SettingsProps) {
     }
     setIsSaving(true);
     try {
-      await updateSettingsRemote({ enabled, delivery_time: deliveryTime, timezone });
+      await updateSettingsRemote({
+        enabled,
+        delivery_time: deliveryTime,
+        timezone,
+        word_filters: { difficulty },
+      });
       const updated = await syncSettingsCache();
       applySettings(updated);
       setMessage('Saved. Changes apply next day.');
@@ -238,13 +299,46 @@ export function Settings({ user }: SettingsProps) {
 
         <label className="mt-4 flex flex-col gap-1 text-sm">
           <span className="font-semibold">Timezone</span>
-          <input
-            type="text"
-            className="rounded-xl border border-[rgba(30,27,22,0.12)] bg-white px-3 py-2 text-sm text-muted"
+          <select
+            className="rounded-xl border border-[rgba(30,27,22,0.12)] bg-white px-3 py-2 text-sm"
             value={timezone}
-            readOnly
-          />
+            onChange={(event) => setTimezone(event.currentTarget.value)}
+            disabled={isSaving || isToggling}
+          >
+            {timeZoneOptions.map((zone) => (
+              <option key={zone} value={zone}>
+                {zone}
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-muted">Choose the timezone for daily delivery scheduling.</p>
         </label>
+
+        <fieldset className="mt-4 space-y-2">
+          <legend className="text-sm font-semibold">Word difficulty</legend>
+          <p className="text-xs text-muted">Choose how challenging your daily words should feel.</p>
+          <div className="grid gap-2 sm:grid-cols-3">
+            {difficultyOptions.map((option) => {
+              const isSelected = difficulty === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setDifficulty(option.value)}
+                  disabled={isSaving || isToggling}
+                  className={`cursor-pointer rounded-xl border px-3 py-2 text-left transition disabled:cursor-not-allowed ${
+                    isSelected
+                      ? 'border-accent bg-accent/10 text-accent-strong'
+                      : 'border-[rgba(30,27,22,0.12)] bg-white text-ink'
+                  }`}
+                >
+                  <p className="text-sm font-semibold">{option.label}</p>
+                  <p className="text-xs text-muted">{option.description}</p>
+                </button>
+              );
+            })}
+          </div>
+        </fieldset>
 
         {message ? <p className="mt-3 text-sm text-accent-strong">{message}</p> : null}
         <Button className="mt-4" type="submit" disabled={isSaving || isToggling}>
