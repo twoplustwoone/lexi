@@ -4,7 +4,7 @@ import { getLocalDateKey } from '@word-of-the-day/shared';
 
 import { buildServerEvent, recordEvent } from '../analytics';
 import { Env } from '../env';
-import { getDailyWordId } from '../words';
+import { getDailyWord } from '../words/index';
 import { logError, logInfo, logWarn } from './logger';
 import { sendWebPushNotification } from './push';
 
@@ -56,8 +56,8 @@ export async function processDueSchedules(env: Env): Promise<CronStats> {
       for (const schedule of schedules) {
         const scheduledAt = DateTime.fromISO(schedule.next_delivery_at, { zone: 'utc' }).toJSDate();
         const dateKey = getLocalDateKey(scheduledAt, schedule.timezone);
-        const wordId = await getDailyWordId(env, dateKey);
-        const delivered = await ensureUserWordDelivered(env, schedule.user_id, wordId, dateKey);
+        const { wordPoolId } = await getDailyWord(env, dateKey);
+        const delivered = await ensureUserWordDelivered(env, schedule.user_id, wordPoolId, dateKey);
 
         if (delivered) {
           await recordEvent(
@@ -73,7 +73,7 @@ export async function processDueSchedules(env: Env): Promise<CronStats> {
             env,
             'cron',
             'Word already delivered for schedule; sending notification anyway',
-            { userId: schedule.user_id, wordId, dateKey },
+            { userId: schedule.user_id, wordPoolId, dateKey },
             schedule.user_id
           );
         }
