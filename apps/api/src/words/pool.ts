@@ -4,6 +4,18 @@ import type { Env } from '../env';
 import type { WordPoolRow, WordDetailsRow } from '../enrichment/service';
 import { getCurrentCycle } from './selection';
 
+function parseTierFromSource(source: string): number | null {
+  const match = source.match(/\.([0-9]{1,3})$/);
+  if (!match) {
+    return null;
+  }
+  const tier = Number(match[1]);
+  if (!Number.isFinite(tier)) {
+    return null;
+  }
+  return tier;
+}
+
 /**
  * Get a word from the pool by ID
  */
@@ -117,6 +129,7 @@ export async function importWords(
   source: string = 'import'
 ): Promise<{ created: number; skipped: number }> {
   const now = DateTime.utc().toISO();
+  const tier = parseTierFromSource(source);
   let created = 0;
   let skipped = 0;
 
@@ -126,9 +139,9 @@ export async function importWords(
     const batch = words.slice(i, i + batchSize);
     const statements = batch.map((word) =>
       env.DB.prepare(
-        `INSERT OR IGNORE INTO word_pool (word, enabled, source, created_at)
-         VALUES (?, 1, ?, ?)`
-      ).bind(word.toLowerCase().trim(), source, now)
+        `INSERT OR IGNORE INTO word_pool (word, enabled, tier, source, created_at)
+         VALUES (?, 1, ?, ?, ?)`
+      ).bind(word.toLowerCase().trim(), tier, source, now)
     );
 
     const results = await env.DB.batch(statements);

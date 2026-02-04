@@ -1,10 +1,10 @@
 import { DateTime } from 'luxon';
 
-import { getLocalDateKey } from '@word-of-the-day/shared';
+import { getLocalDateKey, normalizePreferences } from '@word-of-the-day/shared';
 
 import { buildServerEvent, recordEvent } from '../analytics';
 import { Env } from '../env';
-import { getDailyWord } from '../words/index';
+import { getDailyWordForUser } from '../words/index';
 import { logError, logInfo, logWarn } from './logger';
 import { sendWebPushNotification } from './push';
 
@@ -34,7 +34,11 @@ export async function processDueSchedules(env: Env): Promise<CronStats> {
   try {
     while (hasMore) {
       const result = await env.DB.prepare(
-        'SELECT * FROM notification_schedules WHERE enabled = 1 AND next_delivery_at <= ? LIMIT ?'
+        `SELECT ns.*, u.preferences_json
+         FROM notification_schedules ns
+         JOIN users u ON u.id = ns.user_id
+         WHERE ns.enabled = 1 AND ns.next_delivery_at <= ?
+         LIMIT ?`
       )
         .bind(nowIso, BATCH_SIZE)
         .all();
@@ -44,6 +48,7 @@ export async function processDueSchedules(env: Env): Promise<CronStats> {
         delivery_time: string;
         timezone: string;
         next_delivery_at: string;
+        preferences_json: string;
       }>;
 
       if (!schedules.length) {
@@ -56,10 +61,22 @@ export async function processDueSchedules(env: Env): Promise<CronStats> {
       for (const schedule of schedules) {
         const scheduledAt = DateTime.fromISO(schedule.next_delivery_at, { zone: 'utc' }).toJSDate();
         const dateKey = getLocalDateKey(scheduledAt, schedule.timezone);
-        const { wordPoolId } = await getDailyWord(env, dateKey);
-        const delivered = await ensureUserWordDelivered(env, schedule.user_id, wordPoolId, dateKey);
+        const preferences = normalizePreferences(
+          (() => {
+            try {
+              return JSON.parse(schedule.preferences_json);
+            } catch {
+              return null;
+            }
+          })()
+        );
+        const selection = await getDailyWordForUser(env, {
+          userId: schedule.user_id,
+          dateKey,
+          requestedDifficulty: preferences.word_filters?.difficulty ?? null,
+        });
 
-        if (delivered) {
+        if (selection.created) {
           await recordEvent(
             env,
             buildServerEvent({
@@ -68,12 +85,30 @@ export async function processDueSchedules(env: Env): Promise<CronStats> {
               metadata: { source: 'scheduled' },
             })
           );
+          if (
+            selection.usedFallback &&
+            selection.requestedDifficulty &&
+            selection.effectiveDifficulty
+          ) {
+            await recordEvent(
+              env,
+              buildServerEvent({
+                name: 'word_selection_fallback_used',
+                userId: schedule.user_id,
+                metadata: {
+                  source: 'scheduled',
+                  requested_difficulty: selection.requestedDifficulty,
+                  effective_difficulty: selection.effectiveDifficulty,
+                },
+              })
+            );
+          }
         } else {
           await logInfo(
             env,
             'cron',
             'Word already delivered for schedule; sending notification anyway',
-            { userId: schedule.user_id, wordPoolId, dateKey },
+            { userId: schedule.user_id, wordPoolId: selection.wordPoolId, dateKey },
             schedule.user_id
           );
         }
@@ -117,23 +152,6 @@ export async function processDueSchedules(env: Env): Promise<CronStats> {
     });
     throw error;
   }
-}
-
-async function ensureUserWordDelivered(
-  env: Env,
-  userId: string,
-  wordId: number,
-  dateKey: string
-): Promise<boolean> {
-  const nowIso = DateTime.utc().toISO();
-  const result = await env.DB.prepare(
-    'INSERT OR IGNORE INTO user_words (user_id, word_id, delivered_at, delivered_on) VALUES (?, ?, ?, ?)'
-  )
-    .bind(userId, wordId, nowIso, dateKey)
-    .run();
-
-  const changes = result.meta?.changes ?? 0;
-  return changes > 0;
 }
 
 function computeNextDelivery(timezone: string, deliveryTime: string): string {

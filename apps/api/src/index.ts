@@ -53,7 +53,7 @@ import {
   WordInput,
 } from './words';
 import {
-  getDailyWord,
+  getDailyWordForUser,
   getWordPoolById,
   getWordDetails,
   banWord,
@@ -189,8 +189,22 @@ app.get('/api/word/today', async (c) => {
   const { getLocalDateKey } = await import('@word-of-the-day/shared');
   const dateKey = getLocalDateKey(new Date(), user.timezone);
 
-  // Get or create today's word from the word pool
-  const { wordPoolId } = await getDailyWord(c.env, dateKey);
+  const preferences = normalizePreferences(
+    (() => {
+      try {
+        return JSON.parse(user.preferences_json);
+      } catch {
+        return null;
+      }
+    })()
+  );
+
+  const selection = await getDailyWordForUser(c.env, {
+    userId,
+    dateKey,
+    requestedDifficulty: preferences.word_filters?.difficulty ?? null,
+  });
+  const wordPoolId = selection.wordPoolId;
   const wordPool = await getWordPoolById(c.env, wordPoolId);
 
   if (!wordPool) {
@@ -213,25 +227,25 @@ app.get('/api/word/today', async (c) => {
     }
   }
 
-  // Record delivery for this user (maintain user_words for history)
-  const nowIso = DateTime.utc().toISO();
-  const existingUserWord = await c.env.DB.prepare(
-    'SELECT 1 FROM user_words WHERE user_id = ? AND delivered_on = ?'
-  )
-    .bind(userId, dateKey)
-    .first();
-
-  if (!existingUserWord) {
-    await c.env.DB.prepare(
-      'INSERT OR IGNORE INTO user_words (user_id, word_id, delivered_at, delivered_on) VALUES (?, ?, ?, ?)'
-    )
-      .bind(userId, wordPoolId, nowIso, dateKey)
-      .run();
-
+  if (selection.created) {
     await recordEvent(
       c.env,
       buildServerEvent({ name: 'word_delivered', userId, metadata: { source: 'app' } })
     );
+    if (selection.usedFallback && selection.requestedDifficulty && selection.effectiveDifficulty) {
+      await recordEvent(
+        c.env,
+        buildServerEvent({
+          name: 'word_selection_fallback_used',
+          userId,
+          metadata: {
+            source: 'app',
+            requested_difficulty: selection.requestedDifficulty,
+            effective_difficulty: selection.effectiveDifficulty,
+          },
+        })
+      );
+    }
   }
 
   // Trigger background enrichment if details are pending
@@ -249,6 +263,11 @@ app.get('/api/word/today', async (c) => {
     wordPoolId,
     detailsStatus,
     details: wordCard,
+    selection: {
+      requestedDifficulty: selection.requestedDifficulty,
+      effectiveDifficulty: selection.effectiveDifficulty,
+      usedFallback: selection.usedFallback,
+    },
   });
 });
 
@@ -398,11 +417,18 @@ app.put('/api/settings', async (c) => {
       currentPreferences = DEFAULT_PREFERENCES;
     }
   }
-  const updatedPreferences = {
+  const previousDifficulty = currentPreferences.word_filters?.difficulty ?? null;
+  const updatedPreferences = normalizePreferences({
     ...currentPreferences,
     notification_enabled: parsed.enabled,
     delivery_time: parsed.delivery_time,
-  };
+    word_filters: parsed.word_filters
+      ? {
+          ...currentPreferences.word_filters,
+          ...parsed.word_filters,
+        }
+      : currentPreferences.word_filters,
+  });
   await updateUserPreferences(c.env, userId, updatedPreferences);
 
   const sameDayDelivery = c.env.NOTIFICATION_SAME_DAY_DELIVERY === 'true';
@@ -434,6 +460,20 @@ app.put('/api/settings', async (c) => {
 
   if (!parsed.enabled) {
     await recordEvent(c.env, buildServerEvent({ name: 'notification_disabled', userId }));
+  }
+
+  if (parsed.word_filters?.difficulty && parsed.word_filters.difficulty !== previousDifficulty) {
+    await recordEvent(
+      c.env,
+      buildServerEvent({
+        name: 'preferences_difficulty_changed',
+        userId,
+        metadata: {
+          previous_difficulty: previousDifficulty ?? 'none',
+          next_difficulty: parsed.word_filters.difficulty,
+        },
+      })
+    );
   }
 
   return c.json({ ok: true });

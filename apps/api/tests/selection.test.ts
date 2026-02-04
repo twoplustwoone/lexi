@@ -8,6 +8,7 @@ import {
   getEnabledWordCount,
   selectWordForDate,
   getDailyWord,
+  getDailyWordForUser,
 } from '../src/words/selection';
 import { createTestEnv } from './helpers';
 import type { Env } from '../src/env';
@@ -333,5 +334,139 @@ describe('Deterministic Word Selection', () => {
     }
 
     expect(usedWords.size).toBe(50);
+  });
+});
+
+describe('Personalized Word Selection', () => {
+  let env: Env;
+  let cleanup: () => Promise<void>;
+
+  async function seedWord(id: number, word: string, tier: number | null): Promise<void> {
+    const now = new Date().toISOString();
+    await env.DB.prepare(
+      'INSERT INTO word_pool (id, word, enabled, tier, source, created_at) VALUES (?, ?, 1, ?, ?, ?)'
+    )
+      .bind(id, word, tier, 'test', now)
+      .run();
+    await env.DB.prepare("INSERT INTO word_details (word_pool_id, status) VALUES (?, 'ready')")
+      .bind(id)
+      .run();
+  }
+
+  beforeEach(async () => {
+    const testEnv = await createTestEnv();
+    env = testEnv.env;
+    cleanup = testEnv.cleanup;
+
+    await env.DB.prepare('DELETE FROM user_word_usage_log').run();
+    await env.DB.prepare('DELETE FROM user_word_cycle_state').run();
+    await env.DB.prepare('DELETE FROM user_words').run();
+    await env.DB.prepare('DELETE FROM word_usage_log').run();
+    await env.DB.prepare('DELETE FROM daily_words').run();
+    await env.DB.prepare('DELETE FROM word_details').run();
+    await env.DB.prepare('DELETE FROM word_pool').run();
+  });
+
+  afterEach(async () => {
+    await cleanup();
+  });
+
+  it('returns the same word for the same user and date once assigned', async () => {
+    await seedWord(5001, 'amber', 20);
+    await seedWord(5002, 'brisk', 25);
+
+    const userId = 'user-a';
+    const first = await getDailyWordForUser(env, {
+      userId,
+      dateKey: '2024-03-01',
+      requestedDifficulty: 'easy',
+    });
+    const second = await getDailyWordForUser(env, {
+      userId,
+      dateKey: '2024-03-01',
+      requestedDifficulty: 'easy',
+    });
+
+    expect(first.created).toBe(true);
+    expect(second.created).toBe(false);
+    expect(first.wordPoolId).toBe(second.wordPoolId);
+    expect(first.requestedDifficulty).toBe('easy');
+    expect(first.effectiveDifficulty).toBe('easy');
+  });
+
+  it('falls back to a nearby difficulty band when no words exist in the requested band', async () => {
+    await seedWord(6001, 'cascade', 50);
+    await seedWord(6002, 'delta', null);
+
+    const result = await getDailyWordForUser(env, {
+      userId: 'user-fallback',
+      dateKey: '2024-03-02',
+      requestedDifficulty: 'easy',
+    });
+
+    expect(result.created).toBe(true);
+    expect(result.requestedDifficulty).toBe('easy');
+    expect(result.effectiveDifficulty).toBe('balanced');
+    expect(result.usedFallback).toBe(true);
+
+    const stored = await env.DB.prepare(
+      'SELECT requested_difficulty, effective_difficulty FROM user_words WHERE user_id = ? AND delivered_on = ?'
+    )
+      .bind('user-fallback', '2024-03-02')
+      .first();
+    expect(stored?.requested_difficulty).toBe('easy');
+    expect(stored?.effective_difficulty).toBe('balanced');
+  });
+
+  it('can produce different words for different users on the same date when personalized', async () => {
+    for (let i = 0; i < 60; i++) {
+      await seedWord(7000 + i, `easyword${i}`, 20);
+    }
+
+    let foundDifferent = false;
+    for (let day = 1; day <= 12; day++) {
+      const dateKey = `2024-04-${day.toString().padStart(2, '0')}`;
+      const userA = await getDailyWordForUser(env, {
+        userId: 'user-alpha',
+        dateKey,
+        requestedDifficulty: 'easy',
+      });
+      const userB = await getDailyWordForUser(env, {
+        userId: 'user-bravo',
+        dateKey,
+        requestedDifficulty: 'easy',
+      });
+      if (userA.wordPoolId !== userB.wordPoolId) {
+        foundDifferent = true;
+        break;
+      }
+    }
+
+    expect(foundDifferent).toBe(true);
+  });
+
+  it('avoids repeats within a user difficulty cycle until the cycle is exhausted', async () => {
+    await seedWord(8001, 'one', 20);
+    await seedWord(8002, 'two', 20);
+    await seedWord(8003, 'three', 20);
+
+    const used = new Set<number>();
+    for (let day = 1; day <= 3; day++) {
+      const result = await getDailyWordForUser(env, {
+        userId: 'user-cycle',
+        dateKey: `2024-05-0${day}`,
+        requestedDifficulty: 'easy',
+      });
+      expect(used.has(result.wordPoolId)).toBe(false);
+      used.add(result.wordPoolId);
+    }
+
+    const fourth = await getDailyWordForUser(env, {
+      userId: 'user-cycle',
+      dateKey: '2024-05-04',
+      requestedDifficulty: 'easy',
+    });
+
+    expect(used.has(fourth.wordPoolId)).toBe(true);
   });
 });

@@ -65,17 +65,28 @@ function filterWords(words) {
   return filtered;
 }
 
-function createInsertStatements(words, source) {
+function parseTierFromFilename(filePath) {
+  const basename = path.basename(filePath);
+  const match = basename.match(/\.([0-9]{1,3})$/);
+  if (!match) {
+    return null;
+  }
+  const tier = Number(match[1]);
+  return Number.isFinite(tier) ? tier : null;
+}
+
+function createInsertStatements(words, source, tier) {
   const batches = [];
   const now = new Date().toISOString();
+  const tierValue = tier == null ? 'NULL' : String(tier);
 
   for (let i = 0; i < words.length; i += BATCH_SIZE) {
     const batch = words.slice(i, i + BATCH_SIZE);
     const values = batch
-      .map((w) => `('${w.replace(/'/g, "''")}', 1, '${source}', '${now}')`)
+      .map((w) => `('${w.replace(/'/g, "''")}', 1, ${tierValue}, '${source}', '${now}')`)
       .join(',\n  ');
 
-    const sql = `INSERT OR IGNORE INTO word_pool (word, enabled, source, created_at) VALUES
+    const sql = `INSERT OR IGNORE INTO word_pool (word, enabled, tier, source, created_at) VALUES
   ${values};`;
 
     batches.push(sql);
@@ -141,11 +152,13 @@ async function main() {
     process.exit(0);
   }
 
-  const source = path.basename(filePath, path.extname(filePath)).slice(0, 50);
-  const batches = createInsertStatements(filtered, source);
+  const source = path.basename(filePath).slice(0, 50);
+  const tier = parseTierFromFilename(filePath);
+  const batches = createInsertStatements(filtered, source, tier);
 
   console.log(`Created ${batches.length} batch(es) of up to ${BATCH_SIZE} words each`);
   console.log(`Source tag: ${source}`);
+  console.log(`Tier: ${tier ?? 'none'}`);
 
   if (isDryRun) {
     console.log('\n--- DRY RUN ---');
