@@ -42,6 +42,9 @@ export const wordSelectionFallbackReasonSchema = z.enum([
 ]);
 export type WordSelectionFallbackReason = z.infer<typeof wordSelectionFallbackReasonSchema>;
 
+export const wordReviewStatusSchema = z.enum(['pending_review', 'approved', 'rejected']);
+export type WordReviewStatus = z.infer<typeof wordReviewStatusSchema>;
+
 export const eventNameSchema = z.enum([
   'app_installed',
   'auth_flow_completed',

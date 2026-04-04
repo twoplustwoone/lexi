@@ -73,8 +73,11 @@ describe('Word Selection', () => {
       )
         .bind(id, words[i], 'test', now)
         .run();
-      // Create pending word_details
-      await env.DB.prepare("INSERT INTO word_details (word_pool_id, status) VALUES (?, 'pending')")
+      // Create approved word_details so base selection tests can exercise legacy behavior.
+      await env.DB.prepare(
+        `INSERT INTO word_details (word_pool_id, status, review_status)
+         VALUES (?, 'ready', 'approved')`
+      )
         .bind(id)
         .run();
     }
@@ -293,7 +296,10 @@ describe('Deterministic Word Selection', () => {
       )
         .bind(id, `word${i}`, 'test', now)
         .run();
-      await env.DB.prepare("INSERT INTO word_details (word_pool_id, status) VALUES (?, 'ready')")
+      await env.DB.prepare(
+        `INSERT INTO word_details (word_pool_id, status, review_status)
+         VALUES (?, 'ready', 'approved')`
+      )
         .bind(id)
         .run();
     }
@@ -362,7 +368,10 @@ describe('Personalized Word Selection', () => {
     )
       .bind(id, word, tier, difficultyCategory, 'test', now)
       .run();
-    await env.DB.prepare("INSERT INTO word_details (word_pool_id, status) VALUES (?, 'ready')")
+    await env.DB.prepare(
+      `INSERT INTO word_details (word_pool_id, status, review_status)
+       VALUES (?, 'ready', 'approved')`
+    )
       .bind(id)
       .run();
   }
@@ -526,5 +535,49 @@ describe('Personalized Word Selection', () => {
     expect(advancedResult.effectiveDifficulty).toBe('advanced');
     expect(advancedResult.usedFallback).toBe(false);
     expect(advancedResult.fallbackReason).toBeNull();
+  });
+
+  it('does not serve pending-review words even when they are ready', async () => {
+    await seedWord(9101, 'abstruse', 95, 'advanced');
+    await seedWord(9102, 'lucid', 95, 'advanced');
+
+    await env.DB.prepare(
+      `UPDATE word_details
+       SET review_status = 'pending_review'
+       WHERE word_pool_id = ?`
+    )
+      .bind(9101)
+      .run();
+
+    const result = await getDailyWordForUser(env, {
+      userId: 'user-review-gate',
+      dateKey: '2024-06-02',
+      requestedDifficulty: 'advanced',
+    });
+
+    expect(result.wordPoolId).toBe(9102);
+    expect(result.effectiveDifficulty).toBe('advanced');
+  });
+
+  it('does not serve rejected words', async () => {
+    await seedWord(9201, 'obdurate', 95, 'advanced');
+    await seedWord(9202, 'perspicacious', 95, 'advanced');
+
+    await env.DB.prepare(
+      `UPDATE word_details
+       SET review_status = 'rejected'
+       WHERE word_pool_id = ?`
+    )
+      .bind(9201)
+      .run();
+
+    const result = await getDailyWordForUser(env, {
+      userId: 'user-reject-gate',
+      dateKey: '2024-06-03',
+      requestedDifficulty: 'advanced',
+    });
+
+    expect(result.wordPoolId).toBe(9202);
+    expect(result.effectiveDifficulty).toBe('advanced');
   });
 });

@@ -16,15 +16,21 @@ import {
   AdminWord,
   AdminWordsResponse,
   WordPoolHealth,
+  WordReviewQueueItem,
+  approveWordPoolReview,
   bulkCreateAdminWords,
   createAdminWord,
   deleteAdminWord,
   fetchAdminWords,
   fetchWordPoolHealth,
+  fetchWordReviewQueue,
+  rejectWordPoolReview,
+  retryWordPoolReview,
   updateAdminWord,
   WordInput,
 } from '../../api';
 import { Button } from '../Button';
+import type { WordCard } from '@word-of-the-day/shared';
 
 interface WordFormData {
   word: string;
@@ -41,6 +47,251 @@ const emptyForm: WordFormData = {
   pronunciation: '',
   examples: [''],
 };
+
+function getPrimaryMeaningDetails(details: WordCard | null): {
+  definition: string;
+  example: string;
+  partOfSpeech: string;
+  etymology: string;
+  pronunciation: string;
+} {
+  const meaning = details?.meanings?.[0];
+  return {
+    definition: meaning?.definitions?.[0] ?? '',
+    example: meaning?.examples?.[0] ?? '',
+    partOfSpeech: meaning?.partOfSpeech ?? 'unknown',
+    etymology: details?.etymology ?? '',
+    pronunciation: details?.phonetics ?? '',
+  };
+}
+
+function buildWordCardDraft(item: WordReviewQueueItem, fields: ReviewDraftFields): WordCard {
+  const current = item.details;
+  return {
+    word: current?.word ?? item.word,
+    phonetics: fields.pronunciation.trim() || null,
+    audioUrl: current?.audioUrl ?? null,
+    meanings: [
+      {
+        partOfSpeech: fields.partOfSpeech.trim() || 'unknown',
+        definitions: [fields.definition.trim()].filter(Boolean),
+        examples: [fields.example.trim()].filter(Boolean),
+        synonyms: current?.meanings?.[0]?.synonyms ?? [],
+        antonyms: current?.meanings?.[0]?.antonyms ?? [],
+      },
+    ],
+    etymology: fields.etymology.trim() || null,
+    sourceUrl: current?.sourceUrl ?? null,
+  };
+}
+
+interface ReviewDraftFields {
+  definition: string;
+  example: string;
+  partOfSpeech: string;
+  etymology: string;
+  pronunciation: string;
+  reviewNote: string;
+}
+
+function ReviewQueue({
+  queue,
+  drafts,
+  actionId,
+  onChangeDraft,
+  onApprove,
+  onReject,
+  onRetry,
+}: {
+  queue: WordReviewQueueItem[];
+  drafts: Record<number, ReviewDraftFields>;
+  actionId: number | null;
+  onChangeDraft: (id: number, patch: Partial<ReviewDraftFields>) => void;
+  onApprove: (item: WordReviewQueueItem) => Promise<void>;
+  onReject: (item: WordReviewQueueItem) => Promise<void>;
+  onRetry: (item: WordReviewQueueItem) => Promise<void>;
+}) {
+  const inputClass =
+    'w-full rounded-lg border border-[rgba(30,27,22,0.12)] bg-white px-3 py-2 text-sm text-ink placeholder:text-muted focus:border-accent-strong focus:outline-none focus:ring-1 focus:ring-accent-strong';
+
+  if (queue.length === 0) {
+    return (
+      <div className="rounded-xl bg-surface p-4 text-sm text-muted">
+        No words are waiting for review right now.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {queue.map((item) => {
+        const draft = drafts[item.id] ?? {
+          ...getPrimaryMeaningDetails(item.details),
+          reviewNote: '',
+        };
+        const busy = actionId === item.id;
+        const rawPayloadText = JSON.stringify(item.rawPayload ?? null, null, 2);
+
+        return (
+          <div
+            key={item.id}
+            className="rounded-xl border border-[rgba(30,27,22,0.08)] bg-white p-4"
+          >
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-base font-semibold text-ink">{item.word}</p>
+                  <span className="rounded-full bg-surface px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">
+                    {item.difficultyCategory}
+                  </span>
+                  <span className="rounded-full bg-[#fffbeb] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#92400e]">
+                    {item.detailsStatus}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-muted">
+                  Source {item.source}
+                  {item.fetchedAt ? ` - fetched ${new Date(item.fetchedAt).toLocaleString()}` : ''}
+                </p>
+                {item.error ? (
+                  <p className="mt-2 text-xs text-[#991b1b]">Error: {item.error}</p>
+                ) : null}
+              </div>
+              <div className="flex gap-2">
+                <Button variant="secondary" size="sm" onClick={() => onRetry(item)} disabled={busy}>
+                  {busy ? 'Working...' : 'Retry'}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => onReject(item)}
+                  disabled={busy || !draft.reviewNote.trim()}
+                >
+                  Reject
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => onApprove(item)}
+                  disabled={busy || !draft.definition.trim()}
+                >
+                  Approve
+                </Button>
+              </div>
+            </div>
+
+            <div className="mt-4 grid gap-3 lg:grid-cols-2">
+              <div className="space-y-3">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-ink">
+                      Part of speech
+                    </label>
+                    <input
+                      type="text"
+                      value={draft.partOfSpeech}
+                      onInput={(e) =>
+                        onChangeDraft(item.id, {
+                          partOfSpeech: (e.target as HTMLInputElement).value,
+                        })
+                      }
+                      className={inputClass}
+                      disabled={busy}
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-ink">Pronunciation</label>
+                    <input
+                      type="text"
+                      value={draft.pronunciation}
+                      onInput={(e) =>
+                        onChangeDraft(item.id, {
+                          pronunciation: (e.target as HTMLInputElement).value,
+                        })
+                      }
+                      className={inputClass}
+                      disabled={busy}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-ink">Definition *</label>
+                  <textarea
+                    value={draft.definition}
+                    onInput={(e) =>
+                      onChangeDraft(item.id, {
+                        definition: (e.target as HTMLTextAreaElement).value,
+                      })
+                    }
+                    className={`${inputClass} min-h-[72px] resize-y`}
+                    disabled={busy}
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-ink">Example</label>
+                  <input
+                    type="text"
+                    value={draft.example}
+                    onInput={(e) =>
+                      onChangeDraft(item.id, {
+                        example: (e.target as HTMLInputElement).value,
+                      })
+                    }
+                    className={inputClass}
+                    disabled={busy}
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-ink">Etymology</label>
+                  <textarea
+                    value={draft.etymology}
+                    onInput={(e) =>
+                      onChangeDraft(item.id, {
+                        etymology: (e.target as HTMLTextAreaElement).value,
+                      })
+                    }
+                    className={`${inputClass} min-h-[60px] resize-y`}
+                    disabled={busy}
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-ink">
+                    Review note{' '}
+                    {item.reviewStatus === 'pending_review' ? '(required to reject)' : ''}
+                  </label>
+                  <input
+                    type="text"
+                    value={draft.reviewNote}
+                    onInput={(e) =>
+                      onChangeDraft(item.id, {
+                        reviewNote: (e.target as HTMLInputElement).value,
+                      })
+                    }
+                    className={inputClass}
+                    placeholder="Reason for approval/edit/rejection"
+                    disabled={busy}
+                  />
+                </div>
+              </div>
+
+              <details className="rounded-lg bg-surface p-3">
+                <summary className="cursor-pointer text-sm font-semibold text-ink">
+                  Raw provider payload
+                </summary>
+                <pre className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap text-xs text-muted">
+                  {rawPayloadText}
+                </pre>
+              </details>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 function WordForm({
   initialData,
@@ -389,6 +640,9 @@ function BulkUpload({ onClose, onSuccess }: { onClose: () => void; onSuccess: ()
 export function WordManagement() {
   const [data, setData] = useState<AdminWordsResponse | null>(null);
   const [poolHealth, setPoolHealth] = useState<WordPoolHealth | null>(null);
+  const [reviewQueue, setReviewQueue] = useState<WordReviewQueueItem[]>([]);
+  const [reviewDrafts, setReviewDrafts] = useState<Record<number, ReviewDraftFields>>({});
+  const [reviewActionId, setReviewActionId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
@@ -423,9 +677,33 @@ export function WordManagement() {
     }
   }, [page, search]);
 
+  const loadReviewQueue = useCallback(async () => {
+    const result = await fetchWordReviewQueue({
+      limit: 20,
+      reviewStatus: 'pending_review',
+    });
+    setReviewQueue(result.words);
+    setReviewDrafts((existing) => {
+      const nextDrafts: Record<number, ReviewDraftFields> = {};
+      for (const item of result.words) {
+        nextDrafts[item.id] = existing[item.id] ?? {
+          ...getPrimaryMeaningDetails(item.details),
+          reviewNote: item.reviewNote ?? '',
+        };
+      }
+      return nextDrafts;
+    });
+  }, []);
+
   useEffect(() => {
     loadWords();
   }, [loadWords]);
+
+  useEffect(() => {
+    loadReviewQueue().catch((err) => {
+      setError(err instanceof Error ? err.message : 'Failed to load review queue');
+    });
+  }, [loadReviewQueue]);
 
   const handleSearch = (e: Event) => {
     e.preventDefault();
@@ -463,6 +741,74 @@ export function WordManagement() {
       await loadWords();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete word');
+    }
+  };
+
+  const handleReviewDraftChange = (id: number, patch: Partial<ReviewDraftFields>) => {
+    setReviewDrafts((current) => ({
+      ...current,
+      [id]: {
+        ...(current[id] ?? {
+          definition: '',
+          example: '',
+          partOfSpeech: 'unknown',
+          etymology: '',
+          pronunciation: '',
+          reviewNote: '',
+        }),
+        ...patch,
+      },
+    }));
+  };
+
+  const handleApproveReview = async (item: WordReviewQueueItem) => {
+    const draft = reviewDrafts[item.id] ?? {
+      ...getPrimaryMeaningDetails(item.details),
+      reviewNote: '',
+    };
+    setReviewActionId(item.id);
+    setError(null);
+    try {
+      await approveWordPoolReview(item.id, {
+        details: buildWordCardDraft(item, draft),
+        reviewNote: draft.reviewNote.trim() || undefined,
+      });
+      await Promise.all([loadReviewQueue(), loadWords()]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to approve word');
+    } finally {
+      setReviewActionId(null);
+    }
+  };
+
+  const handleRejectReview = async (item: WordReviewQueueItem) => {
+    const note = (reviewDrafts[item.id]?.reviewNote ?? '').trim();
+    if (!note) {
+      setError('A review note is required to reject a word');
+      return;
+    }
+    setReviewActionId(item.id);
+    setError(null);
+    try {
+      await rejectWordPoolReview(item.id, note);
+      await Promise.all([loadReviewQueue(), loadWords()]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to reject word');
+    } finally {
+      setReviewActionId(null);
+    }
+  };
+
+  const handleRetryReview = async (item: WordReviewQueueItem) => {
+    setReviewActionId(item.id);
+    setError(null);
+    try {
+      await retryWordPoolReview(item.id);
+      await Promise.all([loadReviewQueue(), loadWords()]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to queue retry');
+    } finally {
+      setReviewActionId(null);
     }
   };
 
@@ -562,6 +908,30 @@ export function WordManagement() {
           </div>
         </div>
       ) : null}
+
+      <div className="mb-4 rounded-xl border border-[rgba(30,27,22,0.08)] bg-[rgba(255,255,255,0.8)] p-4">
+        <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-semibold text-ink">Pending Review</p>
+            <p className="text-xs text-muted">
+              New and re-enriched words must be approved here before they can be served.
+            </p>
+          </div>
+          <span className="text-xs font-medium text-muted">
+            {reviewQueue.length} item{reviewQueue.length === 1 ? '' : 's'}
+          </span>
+        </div>
+
+        <ReviewQueue
+          queue={reviewQueue}
+          drafts={reviewDrafts}
+          actionId={reviewActionId}
+          onChangeDraft={handleReviewDraftChange}
+          onApprove={handleApproveReview}
+          onReject={handleRejectReview}
+          onRetry={handleRetryReview}
+        />
+      </div>
 
       {/* Search */}
       <form onSubmit={handleSearch} className="mb-4 flex gap-2">

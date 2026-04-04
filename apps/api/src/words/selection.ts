@@ -63,9 +63,10 @@ export async function getAvailableWordCount(env: Env, cycle: number): Promise<nu
     `SELECT COUNT(*) as count FROM word_pool wp
      LEFT JOIN word_usage_log wul ON wp.id = wul.word_pool_id AND wul.cycle = ?
      LEFT JOIN word_details wd ON wp.id = wd.word_pool_id
-     WHERE wp.enabled = 1
-       AND wul.id IS NULL
-       AND (wd.status IS NULL OR wd.status IN ('ready', 'pending'))`
+       WHERE wp.enabled = 1
+         AND wul.id IS NULL
+         AND wd.status = 'ready'
+         AND wd.review_status = 'approved'`
   )
     .bind(cycle)
     .first();
@@ -79,8 +80,9 @@ export async function getEnabledWordCount(env: Env): Promise<number> {
   const result = await env.DB.prepare(
     `SELECT COUNT(*) as count FROM word_pool wp
      LEFT JOIN word_details wd ON wp.id = wd.word_pool_id
-     WHERE wp.enabled = 1
-       AND (wd.status IS NULL OR wd.status IN ('ready', 'pending'))`
+       WHERE wp.enabled = 1
+         AND wd.status = 'ready'
+         AND wd.review_status = 'approved'`
   ).first();
   return Number((result as { count: number })?.count ?? 0);
 }
@@ -103,7 +105,8 @@ export async function selectWordForDate(
      LEFT JOIN word_details wd ON wp.id = wd.word_pool_id
      WHERE wp.enabled = 1
        AND wul.id IS NULL
-       AND (wd.status IS NULL OR wd.status IN ('ready', 'pending'))
+       AND wd.status = 'ready'
+       AND wd.review_status = 'approved'
      ORDER BY (wp.id * ?) % ?
      LIMIT 1`
   )
@@ -287,7 +290,8 @@ async function selectWordForUserDifficulty(
      LEFT JOIN word_details wd ON wp.id = wd.word_pool_id
      WHERE wp.enabled = 1
        AND uwul.id IS NULL
-       AND (wd.status IS NULL OR wd.status IN ('ready', 'pending'))
+       AND wd.status = 'ready'
+       AND wd.review_status = 'approved'
        AND (${getDifficultySqlFilter(params.difficulty)})
      ORDER BY (wp.id * ?) % ?
      LIMIT 1`
@@ -326,7 +330,8 @@ export async function getDifficultyOrderPreview(
      FROM word_pool wp
      LEFT JOIN word_details wd ON wp.id = wd.word_pool_id
      WHERE wp.enabled = 1
-       AND (wd.status IS NULL OR wd.status IN ('ready', 'pending'))
+       AND wd.status = 'ready'
+       AND wd.review_status = 'approved'
        AND (${getDifficultySqlFilter(difficulty)})
      ORDER BY wp.id DESC
      LIMIT ?`
@@ -356,7 +361,8 @@ async function getDifficultyCandidateCount(env: Env, difficulty: WordDifficulty)
     `SELECT COUNT(*) as count FROM word_pool wp
      LEFT JOIN word_details wd ON wp.id = wd.word_pool_id
      WHERE wp.enabled = 1
-       AND (wd.status IS NULL OR wd.status IN ('ready', 'pending'))
+       AND wd.status = 'ready'
+       AND wd.review_status = 'approved'
        AND (${getDifficultySqlFilter(difficulty)})`
   ).first();
 

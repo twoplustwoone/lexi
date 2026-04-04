@@ -1,5 +1,9 @@
 import { z } from 'zod';
-import { wordDifficultySchema, wordSelectionFallbackReasonSchema } from './schemas';
+import {
+  wordDifficultySchema,
+  wordReviewStatusSchema,
+  wordSelectionFallbackReasonSchema,
+} from './schemas';
 
 /**
  * Normalized word details format for display
@@ -76,6 +80,10 @@ export const wordPoolEntrySchema = z.object({
   source: z.string(),
   createdAt: z.string(),
   detailsStatus: wordDetailsStatusSchema.nullable(),
+  reviewStatus: wordReviewStatusSchema.nullable(),
+  reviewedAt: z.string().nullable(),
+  reviewedBy: z.string().nullable(),
+  reviewNote: z.string().nullable(),
 });
 
 export type WordPoolEntry = z.infer<typeof wordPoolEntrySchema>;

@@ -3,6 +3,7 @@ import {
   type WordCard,
   type WordDetailsStatus,
   type WordDifficulty,
+  type WordReviewStatus,
   type WordSelectionFallbackReason,
 } from '@word-of-the-day/shared';
 
@@ -529,4 +530,71 @@ export async function bulkCreateAdminWords(words: WordInput[]): Promise<BulkCrea
 
 export async function fetchWordPoolHealth(): Promise<WordPoolHealth> {
   return apiFetch<WordPoolHealth>('/admin/word-pool/health');
+}
+
+export interface WordReviewQueueItem {
+  id: number;
+  word: string;
+  enabled: boolean;
+  tier: number | null;
+  difficultyCategory: WordDifficulty;
+  source: string;
+  createdAt: string;
+  detailsStatus: WordDetailsStatus;
+  reviewStatus: WordReviewStatus;
+  reviewedAt: string | null;
+  reviewedBy: string | null;
+  reviewNote: string | null;
+  fetchedAt: string | null;
+  error: string | null;
+  details: WordCard | null;
+  rawPayload: unknown;
+}
+
+export interface WordReviewQueueResponse {
+  words: WordReviewQueueItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export async function fetchWordReviewQueue(
+  options: {
+    limit?: number;
+    offset?: number;
+    reviewStatus?: WordReviewStatus;
+    difficultyCategory?: WordDifficulty;
+  } = {}
+): Promise<WordReviewQueueResponse> {
+  const params = new URLSearchParams();
+  if (options.limit) params.set('limit', String(options.limit));
+  if (options.offset) params.set('offset', String(options.offset));
+  if (options.reviewStatus) params.set('reviewStatus', options.reviewStatus);
+  if (options.difficultyCategory) params.set('difficultyCategory', options.difficultyCategory);
+  const query = params.toString();
+  return apiFetch<WordReviewQueueResponse>(`/admin/word-pool/review${query ? `?${query}` : ''}`);
+}
+
+export async function approveWordPoolReview(
+  id: number,
+  payload: { reviewNote?: string; details?: WordCard }
+): Promise<{ ok: boolean; reviewStatus: WordReviewStatus }> {
+  return apiFetch(`/admin/word/${id}/approve`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function rejectWordPoolReview(
+  id: number,
+  reviewNote: string
+): Promise<{ ok: boolean; reviewStatus: WordReviewStatus; enabled: boolean }> {
+  return apiFetch(`/admin/word/${id}/reject`, {
+    method: 'POST',
+    body: JSON.stringify({ reviewNote }),
+  });
+}
+
+export async function retryWordPoolReview(id: number): Promise<{ ok: boolean }> {
+  return apiFetch(`/admin/word/${id}/retry`, { method: 'POST' });
 }

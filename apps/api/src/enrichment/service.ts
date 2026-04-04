@@ -1,8 +1,9 @@
 import { DateTime } from 'luxon';
-import type { WordCard, WordDetailsStatus } from '@word-of-the-day/shared';
+import type { WordCard, WordDetailsStatus, WordReviewStatus } from '@word-of-the-day/shared';
 import type { Env } from '../env';
 import type { EnrichmentProvider, EnrichmentResult } from './provider';
 import { DictionaryApiProvider } from './dictionaryapi';
+import { MerriamWebsterProvider } from './merriamWebster';
 
 /**
  * Calculate backoff delay for retry
@@ -20,6 +21,7 @@ export function calculateBackoffMinutes(retryCount: number): number {
 export interface WordDetailsRow {
   word_pool_id: number;
   status: WordDetailsStatus;
+  review_status: WordReviewStatus;
   provider: string | null;
   payload_json: string | null;
   normalized_json: string | null;
@@ -27,6 +29,9 @@ export interface WordDetailsRow {
   next_retry_at: string | null;
   retry_count: number;
   error: string | null;
+  reviewed_at: string | null;
+  reviewed_by: string | null;
+  review_note: string | null;
 }
 
 /**
@@ -46,10 +51,20 @@ export interface WordPoolRow {
  * Enrichment service handles fetching definitions and managing retry state
  */
 export class EnrichmentService {
-  private provider: EnrichmentProvider;
+  private provider?: EnrichmentProvider;
 
   constructor(provider?: EnrichmentProvider) {
-    this.provider = provider ?? new DictionaryApiProvider();
+    this.provider = provider;
+  }
+
+  private getProvider(env: Env): EnrichmentProvider {
+    if (this.provider) {
+      return this.provider;
+    }
+    if (env.MERRIAM_WEBSTER_API_KEY) {
+      return new MerriamWebsterProvider(env.MERRIAM_WEBSTER_API_KEY, new DictionaryApiProvider());
+    }
+    return new DictionaryApiProvider();
   }
 
   /**
@@ -110,18 +125,25 @@ export class EnrichmentService {
     }
 
     // Fetch from provider
-    const result = await this.provider.fetchDefinition(wordPool.word);
+    const provider = this.getProvider(env);
+    const result = await provider.fetchDefinition(wordPool.word);
     const now = DateTime.utc().toISO();
 
     if (result.success && result.normalized) {
       // Success - update to ready
-      await this.updateDetailsSuccess(env, wordPoolId, result, now);
+      await this.updateDetailsSuccess(env, wordPoolId, result, now, provider.name);
       return true;
     }
 
     if (result.notFound) {
       // Word not found - disable and mark as not_found
-      await this.updateDetailsNotFound(env, wordPoolId, result.error ?? 'Not found', now);
+      await this.updateDetailsNotFound(
+        env,
+        wordPoolId,
+        result.error ?? 'Not found',
+        now,
+        provider.name
+      );
       return false;
     }
 
@@ -142,7 +164,8 @@ export class EnrichmentService {
     env: Env,
     wordPoolId: number,
     result: EnrichmentResult,
-    now: string
+    now: string,
+    providerName: string
   ): Promise<void> {
     await env.DB.prepare(
       `UPDATE word_details
@@ -152,11 +175,15 @@ export class EnrichmentService {
            normalized_json = ?,
            fetched_at = ?,
            next_retry_at = NULL,
-           error = NULL
+           error = NULL,
+           review_status = 'pending_review',
+           reviewed_at = NULL,
+           reviewed_by = NULL,
+           review_note = NULL
        WHERE word_pool_id = ?`
     )
       .bind(
-        this.provider.name,
+        providerName,
         JSON.stringify(result.rawPayload),
         JSON.stringify(result.normalized),
         now,
@@ -172,7 +199,8 @@ export class EnrichmentService {
     env: Env,
     wordPoolId: number,
     error: string,
-    now: string
+    now: string,
+    providerName: string
   ): Promise<void> {
     // Mark word as not found and disable it
     await env.DB.batch([
@@ -181,9 +209,13 @@ export class EnrichmentService {
          SET status = 'not_found',
              provider = ?,
              fetched_at = ?,
-             error = ?
+             error = ?,
+             review_status = 'rejected',
+             reviewed_at = ?,
+             reviewed_by = 'system',
+             review_note = 'Provider returned not_found'
          WHERE word_pool_id = ?`
-      ).bind(this.provider.name, now, error, wordPoolId),
+      ).bind(providerName, now, error, now, wordPoolId),
       env.DB.prepare('UPDATE word_pool SET enabled = 0 WHERE id = ?').bind(wordPoolId),
     ]);
   }
@@ -225,7 +257,11 @@ export class EnrichmentService {
        SET status = 'pending',
            retry_count = 0,
            next_retry_at = NULL,
-           error = NULL
+           error = NULL,
+           review_status = 'pending_review',
+           reviewed_at = NULL,
+           reviewed_by = NULL,
+           review_note = NULL
        WHERE word_pool_id = ?`
     )
       .bind(wordPoolId)

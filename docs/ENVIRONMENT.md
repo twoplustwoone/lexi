@@ -30,6 +30,7 @@ Optional integrations (enable when used)
 - `GOOGLE_CLIENT_ID`: Google Sign-In client ID.
 - `RESEND_API_KEY`: Resend API key for email codes.
 - `RESEND_FROM`: From address for email codes.
+- `MERRIAM_WEBSTER_API_KEY`: Merriam-Webster Collegiate Dictionary API key used for word enrichment.
 - `TWILIO_ACCOUNT_SID`: Twilio account SID.
 - `TWILIO_AUTH_TOKEN`: Twilio auth token.
 - `TWILIO_FROM`: Twilio phone number in E.164.

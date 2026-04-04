@@ -14,4 +14,5 @@ export interface Env {
   GOOGLE_CLIENT_ID: string;
   RESEND_API_KEY: string;
   RESEND_FROM: string;
+  MERRIAM_WEBSTER_API_KEY?: string;
 }

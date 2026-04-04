@@ -15,6 +15,8 @@ import {
   type WordCard,
   type WordDetailsStatus,
   wordDifficultySchema,
+  wordCardSchema,
+  wordReviewStatusSchema,
 } from '@word-of-the-day/shared';
 
 import { buildServerEvent, recordEvent } from './analytics';
@@ -60,6 +62,9 @@ import {
   banWord,
   unbanWord,
   listWordPool,
+  listWordReviewQueue,
+  approveWordReview,
+  rejectWordReview,
   importWords,
   getEnrichmentStats,
   getWordPoolHealth,
@@ -1916,6 +1921,63 @@ app.get('/api/admin/word-pool', async (c) => {
       source: w.source,
       createdAt: w.created_at,
       detailsStatus: w.details_status,
+      reviewStatus: w.review_status,
+      reviewedAt: w.reviewed_at,
+      reviewedBy: w.reviewed_by,
+      reviewNote: w.review_note,
+    })),
+    total,
+    limit,
+    offset,
+  });
+});
+
+app.get('/api/admin/word-pool/review', async (c) => {
+  const cookies = parseCookies(c.req.header('cookie') ?? null);
+  const token = cookies.session ?? null;
+  const userId = await getSessionUserId(c.env, token);
+  if (!userId) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const user = await getUserById(c.env, userId);
+  if (!user || user.is_admin !== 1) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+
+  const limit = Math.min(Number(c.req.query('limit')) || 25, 100);
+  const offset = Number(c.req.query('offset')) || 0;
+  const rawReviewStatus = c.req.query('reviewStatus');
+  const reviewStatus = rawReviewStatus
+    ? wordReviewStatusSchema.parse(rawReviewStatus)
+    : 'pending_review';
+  const rawDifficulty = c.req.query('difficultyCategory');
+  const difficultyCategory = rawDifficulty ? wordDifficultySchema.parse(rawDifficulty) : undefined;
+
+  const { words, total } = await listWordReviewQueue(c.env, {
+    limit,
+    offset,
+    reviewStatus,
+    difficultyCategory,
+  });
+
+  return c.json({
+    words: words.map((w) => ({
+      id: w.id,
+      word: w.word,
+      enabled: w.enabled === 1,
+      tier: w.tier,
+      difficultyCategory: w.difficulty_category,
+      source: w.source,
+      createdAt: w.created_at,
+      detailsStatus: w.details_status,
+      reviewStatus: w.review_status,
+      reviewedAt: w.reviewed_at,
+      reviewedBy: w.reviewed_by,
+      reviewNote: w.review_note,
+      fetchedAt: w.fetched_at,
+      error: w.error,
+      details: w.normalized_json ? JSON.parse(w.normalized_json) : null,
+      rawPayload: w.payload_json ? JSON.parse(w.payload_json) : null,
     })),
     total,
     limit,
@@ -2035,6 +2097,74 @@ app.post('/api/admin/word/:id/retry', async (c) => {
   await enrichmentService.resetForRetry(c.env, id);
 
   return c.json({ ok: true });
+});
+
+app.post('/api/admin/word/:id/approve', async (c) => {
+  const cookies = parseCookies(c.req.header('cookie') ?? null);
+  const token = cookies.session ?? null;
+  const userId = await getSessionUserId(c.env, token);
+  if (!userId) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const user = await getUserById(c.env, userId);
+  if (!user || user.is_admin !== 1) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+
+  const id = Number(c.req.param('id'));
+  if (Number.isNaN(id)) {
+    return c.json({ error: 'Invalid word id' }, 400);
+  }
+
+  const body = await c.req.json().catch(() => ({}));
+  const parsed = z
+    .object({
+      reviewNote: z.string().max(500).optional(),
+      details: wordCardSchema.optional(),
+    })
+    .parse(body);
+
+  const success = await approveWordReview(c.env, id, userId, {
+    reviewNote: parsed.reviewNote,
+    normalizedDetails: parsed.details,
+  });
+  if (!success) {
+    return c.json({ error: 'Word not found' }, 404);
+  }
+
+  return c.json({ ok: true, reviewStatus: 'approved' });
+});
+
+app.post('/api/admin/word/:id/reject', async (c) => {
+  const cookies = parseCookies(c.req.header('cookie') ?? null);
+  const token = cookies.session ?? null;
+  const userId = await getSessionUserId(c.env, token);
+  if (!userId) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const user = await getUserById(c.env, userId);
+  if (!user || user.is_admin !== 1) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+
+  const id = Number(c.req.param('id'));
+  if (Number.isNaN(id)) {
+    return c.json({ error: 'Invalid word id' }, 400);
+  }
+
+  const body = await c.req.json().catch(() => ({}));
+  const parsed = z
+    .object({
+      reviewNote: z.string().min(1).max(500),
+    })
+    .parse(body);
+
+  const success = await rejectWordReview(c.env, id, userId, parsed.reviewNote);
+  if (!success) {
+    return c.json({ error: 'Word not found' }, 404);
+  }
+
+  return c.json({ ok: true, reviewStatus: 'rejected', enabled: false });
 });
 
 app.get('/api/admin/enrichment/stats', async (c) => {

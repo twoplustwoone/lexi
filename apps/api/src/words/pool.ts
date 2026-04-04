@@ -1,9 +1,11 @@
 import { DateTime } from 'luxon';
 import type {
   EnrichmentStats,
+  WordCard,
   WordDetailsStatus,
   WordDifficulty,
   WordPoolHealth,
+  WordReviewStatus,
 } from '@word-of-the-day/shared';
 import type { Env } from '../env';
 import type { WordPoolRow, WordDetailsRow } from '../enrichment/service';
@@ -104,7 +106,15 @@ export async function listWordPool(
     difficultyCategory?: WordDifficulty;
   } = {}
 ): Promise<{
-  words: Array<WordPoolRow & { details_status: WordDetailsStatus | null }>;
+  words: Array<
+    WordPoolRow & {
+      details_status: WordDetailsStatus | null;
+      review_status: WordReviewStatus | null;
+      reviewed_at: string | null;
+      reviewed_by: string | null;
+      review_note: string | null;
+    }
+  >;
   total: number;
 }> {
   const limit = options.limit ?? 50;
@@ -144,7 +154,14 @@ export async function listWordPool(
     .first();
 
   const listResult = await env.DB.prepare(
-    `SELECT wp.*, wd.status as details_status FROM word_pool wp
+    `SELECT
+       wp.*,
+       wd.status as details_status,
+       wd.review_status as review_status,
+       wd.reviewed_at as reviewed_at,
+       wd.reviewed_by as reviewed_by,
+       wd.review_note as review_note
+     FROM word_pool wp
      LEFT JOIN word_details wd ON wp.id = wd.word_pool_id
      ${whereClause}
      ORDER BY wp.id DESC
@@ -155,7 +172,13 @@ export async function listWordPool(
 
   return {
     words: listResult.results as unknown as Array<
-      WordPoolRow & { details_status: WordDetailsStatus | null }
+      WordPoolRow & {
+        details_status: WordDetailsStatus | null;
+        review_status: WordReviewStatus | null;
+        reviewed_at: string | null;
+        reviewed_by: string | null;
+        review_note: string | null;
+      }
     >,
     total: Number((countResult as { count: number })?.count ?? 0),
   };
@@ -257,11 +280,20 @@ export async function getWordPoolHealth(env: Env): Promise<WordPoolHealth> {
   const [difficultyRows, sourceRows] = await Promise.all([
     env.DB.prepare(
       `SELECT
-         wp.difficulty_category as difficulty_category,
-         COUNT(*) as total,
-         SUM(CASE WHEN wp.enabled = 1 THEN 1 ELSE 0 END) as enabled,
-         SUM(CASE WHEN wd.status = 'ready' THEN 1 ELSE 0 END) as ready,
-         SUM(CASE WHEN wd.status = 'pending' OR wd.status IS NULL THEN 1 ELSE 0 END) as pending,
+       wp.difficulty_category as difficulty_category,
+       COUNT(*) as total,
+       SUM(CASE WHEN wp.enabled = 1 THEN 1 ELSE 0 END) as enabled,
+         SUM(CASE WHEN wd.status = 'ready' AND wd.review_status = 'approved' THEN 1 ELSE 0 END)
+           as ready,
+         SUM(
+           CASE
+             WHEN wd.status = 'pending'
+               OR wd.status IS NULL
+               OR (wd.status = 'ready' AND wd.review_status = 'pending_review')
+             THEN 1
+             ELSE 0
+           END
+         ) as pending,
          SUM(CASE WHEN wd.status = 'failed' THEN 1 ELSE 0 END) as failed,
          SUM(CASE WHEN wd.status = 'not_found' THEN 1 ELSE 0 END) as not_found
        FROM word_pool wp
@@ -273,7 +305,8 @@ export async function getWordPoolHealth(env: Env): Promise<WordPoolHealth> {
          wp.source as source,
          wp.difficulty_category as difficulty_category,
          COUNT(*) as total,
-         SUM(CASE WHEN wd.status = 'ready' THEN 1 ELSE 0 END) as ready
+         SUM(CASE WHEN wd.status = 'ready' AND wd.review_status = 'approved' THEN 1 ELSE 0 END)
+           as ready
        FROM word_pool wp
        LEFT JOIN word_details wd ON wp.id = wd.word_pool_id
        GROUP BY wp.source, wp.difficulty_category
@@ -339,9 +372,151 @@ export async function getDifficultyReadyWordCount(
      FROM word_pool wp
      LEFT JOIN word_details wd ON wp.id = wd.word_pool_id
      WHERE wp.enabled = 1
-       AND (wd.status IS NULL OR wd.status IN ('ready', 'pending'))
+       AND wd.status = 'ready'
+       AND wd.review_status = 'approved'
        AND (${getDifficultySqlFilter(difficultyCategory)})`
   ).first();
 
   return Number((result as { count: number } | null)?.count ?? 0);
+}
+
+export async function listWordReviewQueue(
+  env: Env,
+  options: {
+    limit?: number;
+    offset?: number;
+    reviewStatus?: WordReviewStatus;
+    difficultyCategory?: WordDifficulty;
+  } = {}
+): Promise<{
+  words: Array<
+    WordPoolRow & {
+      details_status: WordDetailsStatus;
+      review_status: WordReviewStatus;
+      reviewed_at: string | null;
+      reviewed_by: string | null;
+      review_note: string | null;
+      payload_json: string | null;
+      normalized_json: string | null;
+      error: string | null;
+      fetched_at: string | null;
+    }
+  >;
+  total: number;
+}> {
+  const limit = options.limit ?? 50;
+  const offset = options.offset ?? 0;
+  const reviewStatus = options.reviewStatus ?? 'pending_review';
+  const conditions = ['wd.review_status = ?'];
+  const params: Array<string | number> = [reviewStatus];
+
+  if (options.difficultyCategory) {
+    conditions.push('wp.difficulty_category = ?');
+    params.push(options.difficultyCategory);
+  }
+
+  const whereClause = `WHERE ${conditions.join(' AND ')}`;
+
+  const countResult = await env.DB.prepare(
+    `SELECT COUNT(*) as count
+     FROM word_pool wp
+     JOIN word_details wd ON wp.id = wd.word_pool_id
+     ${whereClause}`
+  )
+    .bind(...params)
+    .first();
+
+  const listResult = await env.DB.prepare(
+    `SELECT
+       wp.*,
+       wd.status as details_status,
+       wd.review_status as review_status,
+       wd.reviewed_at as reviewed_at,
+       wd.reviewed_by as reviewed_by,
+       wd.review_note as review_note,
+       wd.payload_json as payload_json,
+       wd.normalized_json as normalized_json,
+       wd.error as error,
+       wd.fetched_at as fetched_at
+     FROM word_pool wp
+     JOIN word_details wd ON wp.id = wd.word_pool_id
+     ${whereClause}
+     ORDER BY COALESCE(wd.fetched_at, wp.created_at) DESC, wp.id DESC
+     LIMIT ? OFFSET ?`
+  )
+    .bind(...params, limit, offset)
+    .all();
+
+  return {
+    words: listResult.results as unknown as Array<
+      WordPoolRow & {
+        details_status: WordDetailsStatus;
+        review_status: WordReviewStatus;
+        reviewed_at: string | null;
+        reviewed_by: string | null;
+        review_note: string | null;
+        payload_json: string | null;
+        normalized_json: string | null;
+        error: string | null;
+        fetched_at: string | null;
+      }
+    >,
+    total: Number((countResult as { count: number } | null)?.count ?? 0),
+  };
+}
+
+export async function approveWordReview(
+  env: Env,
+  wordPoolId: number,
+  reviewerId: string,
+  options: {
+    reviewNote?: string;
+    normalizedDetails?: WordCard;
+  } = {}
+): Promise<boolean> {
+  const now = DateTime.utc().toISO();
+  const result = await env.DB.prepare(
+    `UPDATE word_details
+     SET status = 'ready',
+         review_status = 'approved',
+         reviewed_at = ?,
+         reviewed_by = ?,
+         review_note = ?,
+         normalized_json = COALESCE(?, normalized_json),
+         next_retry_at = NULL,
+         error = NULL
+     WHERE word_pool_id = ?`
+  )
+    .bind(
+      now,
+      reviewerId,
+      options.reviewNote ?? null,
+      options.normalizedDetails ? JSON.stringify(options.normalizedDetails) : null,
+      wordPoolId
+    )
+    .run();
+
+  return (result.meta?.changes ?? 0) > 0;
+}
+
+export async function rejectWordReview(
+  env: Env,
+  wordPoolId: number,
+  reviewerId: string,
+  reviewNote: string
+): Promise<boolean> {
+  const now = DateTime.utc().toISO();
+  const results = await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE word_details
+       SET review_status = 'rejected',
+           reviewed_at = ?,
+           reviewed_by = ?,
+           review_note = ?
+       WHERE word_pool_id = ?`
+    ).bind(now, reviewerId, reviewNote, wordPoolId),
+    env.DB.prepare('UPDATE word_pool SET enabled = 0 WHERE id = ?').bind(wordPoolId),
+  ]);
+
+  return results.some((result) => (result.meta?.changes ?? 0) > 0);
 }

@@ -38,12 +38,14 @@ describe('settings routes', () => {
         .run();
 
       await env.DB.prepare(
-        `INSERT INTO word_details (word_pool_id, status, normalized_json, fetched_at)
-         VALUES (?, ?, ?, ?)`
+        `INSERT INTO word_details
+           (word_pool_id, status, review_status, normalized_json, fetched_at)
+         VALUES (?, ?, ?, ?, ?)`
       )
         .bind(
           999,
           'ready',
+          'approved',
           JSON.stringify({
             word: 'resonance',
             phonetics: 'REZ-uh-nuhns',
@@ -169,12 +171,14 @@ describe('settings routes', () => {
         .bind(12001, 'centripetal', 1, 50, 'test', createdAt)
         .run();
       await env.DB.prepare(
-        `INSERT INTO word_details (word_pool_id, status, normalized_json, fetched_at)
-         VALUES (?, ?, ?, ?)`
+        `INSERT INTO word_details
+           (word_pool_id, status, review_status, normalized_json, fetched_at)
+         VALUES (?, ?, ?, ?, ?)`
       )
         .bind(
           12001,
           'ready',
+          'approved',
           JSON.stringify({
             word: 'centripetal',
             phonetics: 'sen-TRIP-uh-tuhl',

@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
 import { calculateBackoffMinutes, EnrichmentService } from '../src/enrichment/service';
 import { normalizeApiResponse, DictionaryApiProvider } from '../src/enrichment/dictionaryapi';
+import { MerriamWebsterProvider } from '../src/enrichment/merriamWebster';
 import { createTestEnv } from './helpers';
 import type { Env } from '../src/env';
 
@@ -284,6 +285,7 @@ describe('EnrichmentService', () => {
     const details = await service.getWordDetails(env, uniqueId);
     expect(details).not.toBeNull();
     expect(details?.status).toBe('pending');
+    expect(details?.review_status).toBe('pending_review');
   });
 
   it('parses normalized JSON correctly', () => {
@@ -292,6 +294,7 @@ describe('EnrichmentService', () => {
     const details = {
       word_pool_id: 1,
       status: 'ready' as const,
+      review_status: 'approved' as const,
       provider: 'test',
       payload_json: null,
       normalized_json: JSON.stringify({
@@ -305,6 +308,9 @@ describe('EnrichmentService', () => {
       next_retry_at: null,
       retry_count: 0,
       error: null,
+      reviewed_at: new Date().toISOString(),
+      reviewed_by: 'admin',
+      review_note: 'Looks good',
     };
 
     const parsed = service.parseNormalizedJson(details);
@@ -318,6 +324,7 @@ describe('EnrichmentService', () => {
     const details = {
       word_pool_id: 1,
       status: 'ready' as const,
+      review_status: 'approved' as const,
       provider: 'test',
       payload_json: null,
       normalized_json: 'not valid json',
@@ -325,6 +332,9 @@ describe('EnrichmentService', () => {
       next_retry_at: null,
       retry_count: 0,
       error: null,
+      reviewed_at: new Date().toISOString(),
+      reviewed_by: 'admin',
+      review_note: null,
     };
 
     const parsed = service.parseNormalizedJson(details);
@@ -335,5 +345,156 @@ describe('EnrichmentService', () => {
     const service = new EnrichmentService();
     const parsed = service.parseNormalizedJson(null);
     expect(parsed).toBeNull();
+  });
+});
+
+describe('MerriamWebsterProvider', () => {
+  let originalFetch: typeof global.fetch;
+
+  beforeEach(() => {
+    originalFetch = global.fetch;
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it('normalizes a Merriam-Webster Collegiate response', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => [
+        {
+          meta: { id: 'abstruse' },
+          hwi: {
+            prs: [
+              {
+                mw: 'ab-ˈstrüs',
+                sound: { audio: 'abstru02' },
+              },
+            ],
+          },
+          fl: 'adjective',
+          shortdef: ['difficult to comprehend : recondite'],
+          def: [
+            {
+              sseq: [
+                [
+                  [
+                    'sense',
+                    {
+                      dt: [
+                        ['text', '{bc}difficult to comprehend {bc}{sx|recondite||}'],
+                        [
+                          'vis',
+                          [
+                            {
+                              t: 'an {wi}abstruse{/wi} treatise on metaphysics',
+                            },
+                          ],
+                        ],
+                      ],
+                    },
+                  ],
+                ],
+              ],
+            },
+          ],
+          et: [['text', 'Latin {it}abstrusus{/it}, past participle of {it}abstrudere{/it}']],
+        },
+      ],
+    });
+
+    const provider = new MerriamWebsterProvider('test-key');
+    const result = await provider.fetchDefinition('abstruse');
+
+    expect(result.success).toBe(true);
+    expect(result.notFound).toBeUndefined();
+    expect(result.normalized?.word).toBe('abstruse');
+    expect(result.normalized?.phonetics).toBe('ab-ˈstrüs');
+    expect(result.normalized?.audioUrl).toBe(
+      'https://media.merriam-webster.com/audio/prons/en/us/mp3/a/abstru02.mp3'
+    );
+    expect(result.normalized?.meanings[0].partOfSpeech).toBe('adjective');
+    expect(result.normalized?.meanings[0].definitions[0]).toBe(
+      'difficult to comprehend: recondite'
+    );
+    expect(result.normalized?.meanings[0].examples[0]).toBe(
+      'an abstruse treatise on metaphysics'
+    );
+    expect(result.normalized?.etymology).toContain('Latin abstrusus');
+    expect(result.normalized?.sourceUrl).toBe(
+      'https://www.merriam-webster.com/dictionary/abstruse'
+    );
+  });
+
+  it('falls back to DictionaryAPI when Merriam-Webster has no usable entry', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ['abstrusely', 'abstruseness'],
+    });
+
+    const fallbackProvider = {
+      name: 'fallback-provider',
+      fetchDefinition: vi.fn().mockResolvedValue({
+        success: true,
+        rawPayload: [{ word: 'abstruse' }],
+        normalized: {
+          word: 'abstruse',
+          phonetics: null,
+          audioUrl: null,
+          meanings: [
+            {
+              partOfSpeech: 'adjective',
+              definitions: ['Hard to understand.'],
+              examples: [],
+              synonyms: [],
+              antonyms: [],
+            },
+          ],
+          etymology: null,
+          sourceUrl: null,
+        },
+      }),
+    };
+
+    const provider = new MerriamWebsterProvider('test-key', fallbackProvider);
+    const result = await provider.fetchDefinition('abstruse');
+
+    expect(result.success).toBe(true);
+    expect(fallbackProvider.fetchDefinition).toHaveBeenCalledWith('abstruse');
+    expect(result.normalized?.meanings[0].definitions[0]).toBe('Hard to understand.');
+    expect(result.rawPayload).toEqual({
+      merriamWebster: ['abstrusely', 'abstruseness'],
+      fallback: [{ word: 'abstruse' }],
+    });
+  });
+
+  it('falls back on transient Merriam-Webster failures', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+    });
+
+    const fallbackProvider = {
+      name: 'fallback-provider',
+      fetchDefinition: vi.fn().mockResolvedValue({
+        success: false,
+        notFound: true,
+        error: 'No definition found',
+      }),
+    };
+
+    const provider = new MerriamWebsterProvider('test-key', fallbackProvider);
+    const result = await provider.fetchDefinition('xylophagous');
+
+    expect(result.success).toBe(false);
+    expect(result.notFound).toBe(true);
+    expect(fallbackProvider.fetchDefinition).toHaveBeenCalledWith('xylophagous');
+    expect(result.rawPayload).toEqual({
+      merriamWebsterErrorStatus: 503,
+      fallback: undefined,
+    });
   });
 });

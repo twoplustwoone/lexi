@@ -6,6 +6,7 @@ VAPID_SUBJECT=mailto:hello@example.com
 GOOGLE_CLIENT_ID=your-google-client-id
 RESEND_API_KEY=your-resend-api-key
 RESEND_FROM=Word of the Day <hello@example.com>
+MERRIAM_WEBSTER_API_KEY=your-merriam-webster-collegiate-api-key
 TWILIO_ACCOUNT_SID=your-twilio-account-sid
 TWILIO_AUTH_TOKEN=your-twilio-auth-token
 TWILIO_FROM=+15555555555
