@@ -37,6 +37,7 @@ export interface WordPoolRow {
   word: string;
   enabled: number;
   tier: number | null;
+  difficulty_category: 'easy' | 'balanced' | 'advanced';
   source: string;
   created_at: string;
 }

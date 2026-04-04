@@ -75,18 +75,37 @@ function parseTierFromFilename(filePath) {
   return Number.isFinite(tier) ? tier : null;
 }
 
+function difficultyCategoryFromTier(tier) {
+  if (tier != null && tier > 60) {
+    return 'advanced';
+  }
+  if (tier != null && tier > 35) {
+    return 'balanced';
+  }
+  return 'easy';
+}
+
 function createInsertStatements(words, source, tier) {
   const batches = [];
   const now = new Date().toISOString();
   const tierValue = tier == null ? 'NULL' : String(tier);
+  const difficultyCategory = difficultyCategoryFromTier(tier);
 
   for (let i = 0; i < words.length; i += BATCH_SIZE) {
     const batch = words.slice(i, i + BATCH_SIZE);
     const values = batch
-      .map((w) => `('${w.replace(/'/g, "''")}', 1, ${tierValue}, '${source}', '${now}')`)
+      .map(
+        (w) =>
+          `('${w.replace(
+            /'/g,
+            "''"
+          )}', 1, ${tierValue}, '${difficultyCategory}', '${source}', '${now}')`
+      )
       .join(',\n  ');
 
-    const sql = `INSERT OR IGNORE INTO word_pool (word, enabled, tier, source, created_at) VALUES
+    const sql = `INSERT OR IGNORE INTO word_pool
+  (word, enabled, tier, difficulty_category, source, created_at)
+VALUES
   ${values};`;
 
     batches.push(sql);
@@ -145,7 +164,9 @@ async function main() {
   console.log(`Total lines in file: ${lines.length}`);
 
   const filtered = filterWords(lines);
-  console.log(`Words after filtering (${MIN_LENGTH}-${MAX_LENGTH} chars, alphabetic): ${filtered.length}`);
+  console.log(
+    `Words after filtering (${MIN_LENGTH}-${MAX_LENGTH} chars, alphabetic): ${filtered.length}`
+  );
 
   if (filtered.length === 0) {
     console.log('No words to import after filtering.');
@@ -179,7 +200,12 @@ async function main() {
 
   if (!fs.existsSync(apiDir)) {
     // Try from root of monorepo
-    const rootApiDir = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', 'apps', 'api');
+    const rootApiDir = path.resolve(
+      path.dirname(new URL(import.meta.url).pathname),
+      '..',
+      'apps',
+      'api'
+    );
     if (fs.existsSync(rootApiDir)) {
       process.chdir(rootApiDir);
     } else {

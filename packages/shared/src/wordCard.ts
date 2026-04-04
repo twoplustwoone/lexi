@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { wordDifficultySchema } from './schemas';
+import { wordDifficultySchema, wordSelectionFallbackReasonSchema } from './schemas';
 
 /**
  * Normalized word details format for display
@@ -44,6 +44,7 @@ export const dailyWordResponseSchema = z.object({
       requestedDifficulty: wordDifficultySchema.nullable(),
       effectiveDifficulty: wordDifficultySchema.nullable(),
       usedFallback: z.boolean(),
+      fallbackReason: wordSelectionFallbackReasonSchema.nullable(),
     })
     .optional(),
 });
@@ -71,6 +72,7 @@ export const wordPoolEntrySchema = z.object({
   word: z.string(),
   enabled: z.boolean(),
   tier: z.number().nullable(),
+  difficultyCategory: wordDifficultySchema,
   source: z.string(),
   createdAt: z.string(),
   detailsStatus: wordDetailsStatusSchema.nullable(),
@@ -94,3 +96,41 @@ export const enrichmentStatsSchema = z.object({
 });
 
 export type EnrichmentStats = z.infer<typeof enrichmentStatsSchema>;
+
+export const wordPoolHealthSchema = z.object({
+  minimumAdvancedReadyWords: z.number(),
+  advancedHealthy: z.boolean(),
+  byDifficulty: z.record(
+    wordDifficultySchema,
+    z.object({
+      total: z.number(),
+      enabled: z.number(),
+      ready: z.number(),
+      pending: z.number(),
+      failed: z.number(),
+      notFound: z.number(),
+    })
+  ),
+  bySource: z.array(
+    z.object({
+      source: z.string(),
+      difficultyCategory: wordDifficultySchema,
+      total: z.number(),
+      ready: z.number(),
+    })
+  ),
+  upcomingPreview: z.record(
+    wordDifficultySchema,
+    z.array(
+      z.object({
+        id: z.number(),
+        word: z.string(),
+        tier: z.number().nullable(),
+        source: z.string(),
+        detailsStatus: wordDetailsStatusSchema.nullable(),
+      })
+    )
+  ),
+});
+
+export type WordPoolHealth = z.infer<typeof wordPoolHealthSchema>;

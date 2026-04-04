@@ -1,5 +1,5 @@
 import { DateTime } from 'luxon';
-import type { WordDifficulty } from '@word-of-the-day/shared';
+import type { WordDifficulty, WordSelectionFallbackReason } from '@word-of-the-day/shared';
 import type { Env } from '../env';
 
 const MAX_INT = 2147483647;
@@ -18,6 +18,7 @@ export interface UserDailyWordResult {
   requestedDifficulty: WordDifficulty | null;
   effectiveDifficulty: WordDifficulty | null;
   usedFallback: boolean;
+  fallbackReason: WordSelectionFallbackReason | null;
 }
 
 /**
@@ -203,14 +204,14 @@ function parseDifficultyFromDb(value: unknown): WordDifficulty | null {
   return isWordDifficulty(value) ? value : null;
 }
 
-function getDifficultySqlFilter(band: WordDifficulty): string {
+export function getDifficultySqlFilter(band: WordDifficulty): string {
   if (band === 'easy') {
-    return `wp.tier IS NOT NULL AND wp.tier <= ${EASY_MAX_TIER}`;
+    return `(wp.difficulty_category = 'easy' OR (wp.difficulty_category IS NULL AND wp.tier IS NOT NULL AND wp.tier <= ${EASY_MAX_TIER}))`;
   }
   if (band === 'balanced') {
-    return `wp.tier IS NULL OR (wp.tier > ${EASY_MAX_TIER} AND wp.tier <= ${BALANCED_MAX_TIER})`;
+    return `(wp.difficulty_category = 'balanced' OR (wp.difficulty_category IS NULL AND wp.tier IS NOT NULL AND wp.tier > ${EASY_MAX_TIER} AND wp.tier <= ${BALANCED_MAX_TIER}))`;
   }
-  return `wp.tier > ${BALANCED_MAX_TIER}`;
+  return `(wp.difficulty_category = 'advanced' OR (wp.difficulty_category IS NULL AND wp.tier IS NOT NULL AND wp.tier > ${BALANCED_MAX_TIER}))`;
 }
 
 function getUserDifficultySeed(
@@ -301,6 +302,80 @@ async function selectWordForUserDifficulty(
   return { wordPoolId: Number((result as { id: number }).id) };
 }
 
+export async function getDifficultyOrderPreview(
+  env: Env,
+  difficulty: WordDifficulty,
+  limit = 7
+): Promise<
+  Array<{
+    id: number;
+    word: string;
+    tier: number | null;
+    source: string;
+    detailsStatus: 'pending' | 'ready' | 'failed' | 'not_found' | null;
+  }>
+> {
+  const safeLimit = Math.max(1, Math.min(limit, 30));
+  const result = await env.DB.prepare(
+    `SELECT
+       wp.id,
+       wp.word,
+       wp.tier,
+       wp.source,
+       wd.status as details_status
+     FROM word_pool wp
+     LEFT JOIN word_details wd ON wp.id = wd.word_pool_id
+     WHERE wp.enabled = 1
+       AND (wd.status IS NULL OR wd.status IN ('ready', 'pending'))
+       AND (${getDifficultySqlFilter(difficulty)})
+     ORDER BY wp.id DESC
+     LIMIT ?`
+  )
+    .bind(safeLimit)
+    .all();
+
+  return (
+    result.results as Array<{
+      id: number;
+      word: string;
+      tier: number | null;
+      source: string;
+      details_status: 'pending' | 'ready' | 'failed' | 'not_found' | null;
+    }>
+  ).map((row) => ({
+    id: Number(row.id),
+    word: row.word,
+    tier: row.tier === null ? null : Number(row.tier),
+    source: row.source,
+    detailsStatus: row.details_status,
+  }));
+}
+
+async function getDifficultyCandidateCount(env: Env, difficulty: WordDifficulty): Promise<number> {
+  const result = await env.DB.prepare(
+    `SELECT COUNT(*) as count FROM word_pool wp
+     LEFT JOIN word_details wd ON wp.id = wd.word_pool_id
+     WHERE wp.enabled = 1
+       AND (wd.status IS NULL OR wd.status IN ('ready', 'pending'))
+       AND (${getDifficultySqlFilter(difficulty)})`
+  ).first();
+
+  return Number((result as { count: number } | null)?.count ?? 0);
+}
+
+async function resolveFallbackReason(
+  env: Env,
+  requestedDifficulty: WordDifficulty | null,
+  effectiveDifficulty: WordDifficulty | null
+): Promise<WordSelectionFallbackReason | null> {
+  if (!requestedDifficulty || !effectiveDifficulty || requestedDifficulty === effectiveDifficulty) {
+    return null;
+  }
+
+  const requestedPoolCount = await getDifficultyCandidateCount(env, requestedDifficulty);
+  return requestedPoolCount === 0 ? 'requested_pool_empty' : 'requested_pool_exhausted';
+}
+
 async function recordUserDifficultyUsage(
   env: Env,
   params: {
@@ -373,6 +448,11 @@ export async function getDailyWordForUser(
         existing.requestedDifficulty !== null &&
         existing.effectiveDifficulty !== null &&
         existing.requestedDifficulty !== existing.effectiveDifficulty,
+      fallbackReason: await resolveFallbackReason(
+        env,
+        existing.requestedDifficulty,
+        existing.effectiveDifficulty
+      ),
     };
   }
 
@@ -400,6 +480,11 @@ export async function getDailyWordForUser(
             reloaded.requestedDifficulty !== null &&
             reloaded.effectiveDifficulty !== null &&
             reloaded.requestedDifficulty !== reloaded.effectiveDifficulty,
+          fallbackReason: await resolveFallbackReason(
+            env,
+            reloaded.requestedDifficulty,
+            reloaded.effectiveDifficulty
+          ),
         };
       }
     }
@@ -410,6 +495,7 @@ export async function getDailyWordForUser(
       requestedDifficulty: null,
       effectiveDifficulty: null,
       usedFallback: false,
+      fallbackReason: null,
     };
   }
 
@@ -485,6 +571,11 @@ export async function getDailyWordForUser(
           reloaded.requestedDifficulty !== null &&
           reloaded.effectiveDifficulty !== null &&
           reloaded.requestedDifficulty !== reloaded.effectiveDifficulty,
+        fallbackReason: await resolveFallbackReason(
+          env,
+          reloaded.requestedDifficulty,
+          reloaded.effectiveDifficulty
+        ),
       };
     }
   }
@@ -503,5 +594,10 @@ export async function getDailyWordForUser(
     requestedDifficulty,
     effectiveDifficulty: selected.effectiveDifficulty,
     usedFallback: selected.effectiveDifficulty !== requestedDifficulty,
+    fallbackReason: await resolveFallbackReason(
+      env,
+      requestedDifficulty,
+      selected.effectiveDifficulty
+    ),
   };
 }

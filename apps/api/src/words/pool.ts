@@ -1,8 +1,16 @@
 import { DateTime } from 'luxon';
-import type { WordDetailsStatus, EnrichmentStats } from '@word-of-the-day/shared';
+import type {
+  EnrichmentStats,
+  WordDetailsStatus,
+  WordDifficulty,
+  WordPoolHealth,
+} from '@word-of-the-day/shared';
 import type { Env } from '../env';
 import type { WordPoolRow, WordDetailsRow } from '../enrichment/service';
-import { getCurrentCycle } from './selection';
+import { getCurrentCycle, getDifficultyOrderPreview, getDifficultySqlFilter } from './selection';
+
+const MINIMUM_ADVANCED_READY_WORDS = 100;
+const DIFFICULTY_CATEGORIES: WordDifficulty[] = ['easy', 'balanced', 'advanced'];
 
 function parseTierFromSource(source: string): number | null {
   const match = source.match(/\.([0-9]{1,3})$/);
@@ -14,6 +22,34 @@ function parseTierFromSource(source: string): number | null {
     return null;
   }
   return tier;
+}
+
+function parseDifficultyCategoryFromSource(source: string): WordDifficulty | null {
+  const normalized = source.toLowerCase();
+  if (normalized.includes('advanced') || normalized.includes('gre') || normalized.includes('sat')) {
+    return 'advanced';
+  }
+  if (normalized.includes('balanced')) {
+    return 'balanced';
+  }
+  if (normalized.includes('easy') || normalized.includes('seed')) {
+    return 'easy';
+  }
+  return null;
+}
+
+function inferDifficultyCategory(source: string, tier: number | null): WordDifficulty {
+  const explicitCategory = parseDifficultyCategoryFromSource(source);
+  if (explicitCategory) {
+    return explicitCategory;
+  }
+  if (tier !== null && tier > 60) {
+    return 'advanced';
+  }
+  if (tier !== null && tier > 35) {
+    return 'balanced';
+  }
+  return 'easy';
 }
 
 /**
@@ -65,6 +101,7 @@ export async function listWordPool(
     status?: WordDetailsStatus;
     enabled?: boolean;
     search?: string;
+    difficultyCategory?: WordDifficulty;
   } = {}
 ): Promise<{
   words: Array<WordPoolRow & { details_status: WordDetailsStatus | null }>;
@@ -89,6 +126,11 @@ export async function listWordPool(
   if (options.search) {
     conditions.push('wp.word LIKE ?');
     params.push(`%${options.search}%`);
+  }
+
+  if (options.difficultyCategory) {
+    conditions.push('wp.difficulty_category = ?');
+    params.push(options.difficultyCategory);
   }
 
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -126,10 +168,12 @@ export async function listWordPool(
 export async function importWords(
   env: Env,
   words: string[],
-  source: string = 'import'
+  source: string = 'import',
+  difficultyCategory?: WordDifficulty
 ): Promise<{ created: number; skipped: number }> {
   const now = DateTime.utc().toISO();
   const tier = parseTierFromSource(source);
+  const category = difficultyCategory ?? inferDifficultyCategory(source, tier);
   let created = 0;
   let skipped = 0;
 
@@ -139,9 +183,10 @@ export async function importWords(
     const batch = words.slice(i, i + batchSize);
     const statements = batch.map((word) =>
       env.DB.prepare(
-        `INSERT OR IGNORE INTO word_pool (word, enabled, tier, source, created_at)
-         VALUES (?, 1, ?, ?, ?)`
-      ).bind(word.toLowerCase().trim(), tier, source, now)
+        `INSERT OR IGNORE INTO word_pool
+           (word, enabled, tier, difficulty_category, source, created_at)
+         VALUES (?, 1, ?, ?, ?, ?)`
+      ).bind(word.toLowerCase().trim(), tier, category, source, now)
     );
 
     const results = await env.DB.batch(statements);
@@ -200,4 +245,103 @@ export async function getEnrichmentStats(env: Env): Promise<EnrichmentStats> {
     currentCycle: cycle,
     wordsUsedThisCycle: Number((usedResult as { count: number })?.count ?? 0),
   };
+}
+
+export async function getWordPoolHealth(env: Env): Promise<WordPoolHealth> {
+  const byDifficulty: WordPoolHealth['byDifficulty'] = {
+    easy: { total: 0, enabled: 0, ready: 0, pending: 0, failed: 0, notFound: 0 },
+    balanced: { total: 0, enabled: 0, ready: 0, pending: 0, failed: 0, notFound: 0 },
+    advanced: { total: 0, enabled: 0, ready: 0, pending: 0, failed: 0, notFound: 0 },
+  };
+
+  const [difficultyRows, sourceRows] = await Promise.all([
+    env.DB.prepare(
+      `SELECT
+         wp.difficulty_category as difficulty_category,
+         COUNT(*) as total,
+         SUM(CASE WHEN wp.enabled = 1 THEN 1 ELSE 0 END) as enabled,
+         SUM(CASE WHEN wd.status = 'ready' THEN 1 ELSE 0 END) as ready,
+         SUM(CASE WHEN wd.status = 'pending' OR wd.status IS NULL THEN 1 ELSE 0 END) as pending,
+         SUM(CASE WHEN wd.status = 'failed' THEN 1 ELSE 0 END) as failed,
+         SUM(CASE WHEN wd.status = 'not_found' THEN 1 ELSE 0 END) as not_found
+       FROM word_pool wp
+       LEFT JOIN word_details wd ON wp.id = wd.word_pool_id
+       GROUP BY wp.difficulty_category`
+    ).all(),
+    env.DB.prepare(
+      `SELECT
+         wp.source as source,
+         wp.difficulty_category as difficulty_category,
+         COUNT(*) as total,
+         SUM(CASE WHEN wd.status = 'ready' THEN 1 ELSE 0 END) as ready
+       FROM word_pool wp
+       LEFT JOIN word_details wd ON wp.id = wd.word_pool_id
+       GROUP BY wp.source, wp.difficulty_category
+       ORDER BY ready DESC, total DESC, source ASC`
+    ).all(),
+  ]);
+
+  for (const row of difficultyRows.results as Array<{
+    difficulty_category: WordDifficulty;
+    total: number;
+    enabled: number;
+    ready: number;
+    pending: number;
+    failed: number;
+    not_found: number;
+  }>) {
+    byDifficulty[row.difficulty_category] = {
+      total: Number(row.total ?? 0),
+      enabled: Number(row.enabled ?? 0),
+      ready: Number(row.ready ?? 0),
+      pending: Number(row.pending ?? 0),
+      failed: Number(row.failed ?? 0),
+      notFound: Number(row.not_found ?? 0),
+    };
+  }
+
+  const previewEntries = await Promise.all(
+    DIFFICULTY_CATEGORIES.map(async (difficultyCategory) => ({
+      difficultyCategory,
+      words: await getDifficultyOrderPreview(env, difficultyCategory, 7),
+    }))
+  );
+
+  return {
+    minimumAdvancedReadyWords: MINIMUM_ADVANCED_READY_WORDS,
+    advancedHealthy: (byDifficulty.advanced?.ready ?? 0) >= MINIMUM_ADVANCED_READY_WORDS,
+    byDifficulty,
+    bySource: (
+      sourceRows.results as Array<{
+        source: string;
+        difficulty_category: WordDifficulty;
+        total: number;
+        ready: number;
+      }>
+    ).map((row) => ({
+      source: row.source,
+      difficultyCategory: row.difficulty_category,
+      total: Number(row.total ?? 0),
+      ready: Number(row.ready ?? 0),
+    })),
+    upcomingPreview: Object.fromEntries(
+      previewEntries.map(({ difficultyCategory, words }) => [difficultyCategory, words])
+    ) as WordPoolHealth['upcomingPreview'],
+  };
+}
+
+export async function getDifficultyReadyWordCount(
+  env: Env,
+  difficultyCategory: WordDifficulty
+): Promise<number> {
+  const result = await env.DB.prepare(
+    `SELECT COUNT(*) as count
+     FROM word_pool wp
+     LEFT JOIN word_details wd ON wp.id = wd.word_pool_id
+     WHERE wp.enabled = 1
+       AND (wd.status IS NULL OR wd.status IN ('ready', 'pending'))
+       AND (${getDifficultySqlFilter(difficultyCategory)})`
+  ).first();
+
+  return Number((result as { count: number } | null)?.count ?? 0);
 }

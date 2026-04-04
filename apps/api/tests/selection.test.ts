@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import type { WordDifficulty } from '@word-of-the-day/shared';
 
 import {
   hashDateToSeed,
@@ -73,9 +74,7 @@ describe('Word Selection', () => {
         .bind(id, words[i], 'test', now)
         .run();
       // Create pending word_details
-      await env.DB.prepare(
-        "INSERT INTO word_details (word_pool_id, status) VALUES (?, 'pending')"
-      )
+      await env.DB.prepare("INSERT INTO word_details (word_pool_id, status) VALUES (?, 'pending')")
         .bind(id)
         .run();
     }
@@ -108,13 +107,17 @@ describe('Word Selection', () => {
     });
 
     it('excludes disabled words', async () => {
-      await env.DB.prepare('UPDATE word_pool SET enabled = 0 WHERE id = ?').bind(testWordIds[0]).run();
+      await env.DB.prepare('UPDATE word_pool SET enabled = 0 WHERE id = ?')
+        .bind(testWordIds[0])
+        .run();
       const count = await getEnabledWordCount(env);
       expect(count).toBe(4);
     });
 
     it('excludes words with not_found status', async () => {
-      await env.DB.prepare("UPDATE word_details SET status = 'not_found' WHERE word_pool_id = ?").bind(testWordIds[0]).run();
+      await env.DB.prepare("UPDATE word_details SET status = 'not_found' WHERE word_pool_id = ?")
+        .bind(testWordIds[0])
+        .run();
       const count = await getEnabledWordCount(env);
       expect(count).toBe(4);
     });
@@ -212,9 +215,7 @@ describe('Word Selection', () => {
       expect(result.created).toBe(true);
 
       // Verify it was recorded in daily_words
-      const dailyWord = await env.DB.prepare(
-        'SELECT word_pool_id FROM daily_words WHERE day = ?'
-      )
+      const dailyWord = await env.DB.prepare('SELECT word_pool_id FROM daily_words WHERE day = ?')
         .bind('2024-02-03')
         .first();
       expect(dailyWord?.word_pool_id).toBe(result.wordPoolId);
@@ -232,9 +233,7 @@ describe('Word Selection', () => {
     it('records word usage', async () => {
       await getDailyWord(env, '2024-02-03');
 
-      const usage = await env.DB.prepare(
-        'SELECT * FROM word_usage_log WHERE used_on = ?'
-      )
+      const usage = await env.DB.prepare('SELECT * FROM word_usage_log WHERE used_on = ?')
         .bind('2024-02-03')
         .first();
 
@@ -294,9 +293,7 @@ describe('Deterministic Word Selection', () => {
       )
         .bind(id, `word${i}`, 'test', now)
         .run();
-      await env.DB.prepare(
-        "INSERT INTO word_details (word_pool_id, status) VALUES (?, 'ready')"
-      )
+      await env.DB.prepare("INSERT INTO word_details (word_pool_id, status) VALUES (?, 'ready')")
         .bind(id)
         .run();
     }
@@ -341,12 +338,29 @@ describe('Personalized Word Selection', () => {
   let env: Env;
   let cleanup: () => Promise<void>;
 
-  async function seedWord(id: number, word: string, tier: number | null): Promise<void> {
+  function inferDifficultyCategory(tier: number | null): WordDifficulty {
+    if (tier !== null && tier > 60) {
+      return 'advanced';
+    }
+    if (tier !== null && tier > 35) {
+      return 'balanced';
+    }
+    return 'easy';
+  }
+
+  async function seedWord(
+    id: number,
+    word: string,
+    tier: number | null,
+    difficultyCategory: WordDifficulty = inferDifficultyCategory(tier)
+  ): Promise<void> {
     const now = new Date().toISOString();
     await env.DB.prepare(
-      'INSERT INTO word_pool (id, word, enabled, tier, source, created_at) VALUES (?, ?, 1, ?, ?, ?)'
+      `INSERT INTO word_pool
+       (id, word, enabled, tier, difficulty_category, source, created_at)
+       VALUES (?, ?, 1, ?, ?, ?, ?)`
     )
-      .bind(id, word, tier, 'test', now)
+      .bind(id, word, tier, difficultyCategory, 'test', now)
       .run();
     await env.DB.prepare("INSERT INTO word_details (word_pool_id, status) VALUES (?, 'ready')")
       .bind(id)
@@ -396,7 +410,7 @@ describe('Personalized Word Selection', () => {
 
   it('falls back to a nearby difficulty band when no words exist in the requested band', async () => {
     await seedWord(6001, 'cascade', 50);
-    await seedWord(6002, 'delta', null);
+    await seedWord(6002, 'delta', null, 'balanced');
 
     const result = await getDailyWordForUser(env, {
       userId: 'user-fallback',
@@ -408,6 +422,7 @@ describe('Personalized Word Selection', () => {
     expect(result.requestedDifficulty).toBe('easy');
     expect(result.effectiveDifficulty).toBe('balanced');
     expect(result.usedFallback).toBe(true);
+    expect(result.fallbackReason).toBe('requested_pool_empty');
 
     const stored = await env.DB.prepare(
       'SELECT requested_difficulty, effective_difficulty FROM user_words WHERE user_id = ? AND delivered_on = ?'
@@ -416,6 +431,24 @@ describe('Personalized Word Selection', () => {
       .first();
     expect(stored?.requested_difficulty).toBe('easy');
     expect(stored?.effective_difficulty).toBe('balanced');
+  });
+
+  it('returns advanced words from the advanced pool when available', async () => {
+    await seedWord(6101, 'plain', 20, 'easy');
+    await seedWord(6102, 'ordinary', 50, 'balanced');
+    await seedWord(6103, 'recondite', 95, 'advanced');
+
+    const result = await getDailyWordForUser(env, {
+      userId: 'user-advanced',
+      dateKey: '2024-03-03',
+      requestedDifficulty: 'advanced',
+    });
+
+    expect(result.wordPoolId).toBe(6103);
+    expect(result.requestedDifficulty).toBe('advanced');
+    expect(result.effectiveDifficulty).toBe('advanced');
+    expect(result.usedFallback).toBe(false);
+    expect(result.fallbackReason).toBeNull();
   });
 
   it('can produce different words for different users on the same date when personalized', async () => {
@@ -468,5 +501,30 @@ describe('Personalized Word Selection', () => {
     });
 
     expect(used.has(fourth.wordPoolId)).toBe(true);
+  });
+
+  it('uses explicit difficulty_category for NULL-tier words instead of treating them as balanced', async () => {
+    await seedWord(9001, 'axiom', null, 'easy');
+    await seedWord(9002, 'recondite', null, 'advanced');
+
+    const easyResult = await getDailyWordForUser(env, {
+      userId: 'user-null-tier-easy',
+      dateKey: '2024-06-01',
+      requestedDifficulty: 'easy',
+    });
+    const advancedResult = await getDailyWordForUser(env, {
+      userId: 'user-null-tier-advanced',
+      dateKey: '2024-06-01',
+      requestedDifficulty: 'advanced',
+    });
+
+    expect(easyResult.wordPoolId).toBe(9001);
+    expect(easyResult.effectiveDifficulty).toBe('easy');
+    expect(easyResult.usedFallback).toBe(false);
+    expect(easyResult.fallbackReason).toBeNull();
+    expect(advancedResult.wordPoolId).toBe(9002);
+    expect(advancedResult.effectiveDifficulty).toBe('advanced');
+    expect(advancedResult.usedFallback).toBe(false);
+    expect(advancedResult.fallbackReason).toBeNull();
   });
 });

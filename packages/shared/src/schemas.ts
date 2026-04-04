@@ -36,6 +36,12 @@ export const passwordSchema = z.string().min(10);
 
 export const wordDifficultySchema = z.enum(['easy', 'balanced', 'advanced']);
 
+export const wordSelectionFallbackReasonSchema = z.enum([
+  'requested_pool_empty',
+  'requested_pool_exhausted',
+]);
+export type WordSelectionFallbackReason = z.infer<typeof wordSelectionFallbackReasonSchema>;
+
 export const eventNameSchema = z.enum([
   'app_installed',
   'auth_flow_completed',
