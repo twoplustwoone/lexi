@@ -1,13 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
-import {
-  calculateBackoffMinutes,
-  EnrichmentService,
-} from '../src/enrichment/service';
-import {
-  normalizeApiResponse,
-  DictionaryApiProvider,
-} from '../src/enrichment/dictionaryapi';
+import { calculateBackoffMinutes, EnrichmentService } from '../src/enrichment/service';
+import { normalizeApiResponse, DictionaryApiProvider } from '../src/enrichment/dictionaryapi';
 import { createTestEnv } from './helpers';
 import type { Env } from '../src/env';
 
@@ -45,9 +39,7 @@ describe('normalizeApiResponse', () => {
       {
         word: 'serendipity',
         phonetic: '/ˌsɛɹ.ənˈdɪp.ɪ.ti/',
-        phonetics: [
-          { text: '/ˌsɛɹ.ənˈdɪp.ɪ.ti/', audio: 'https://example.com/audio.mp3' },
-        ],
+        phonetics: [{ text: '/ˌsɛɹ.ənˈdɪp.ɪ.ti/', audio: 'https://example.com/audio.mp3' }],
         meanings: [
           {
             partOfSpeech: 'noun',
@@ -152,6 +144,45 @@ describe('normalizeApiResponse', () => {
     // No duplicates
     const synonyms = result.meanings[0].synonyms || [];
     expect(new Set(synonyms).size).toBe(synonyms.length);
+  });
+
+  it('prioritizes general modern definitions over archaic or niche senses', () => {
+    const response = [
+      {
+        word: 'audible',
+        meanings: [
+          {
+            partOfSpeech: 'noun',
+            definitions: [
+              {
+                definition:
+                  'A substitute offensive play called at the line of scrimmage in football.',
+              },
+              {
+                definition: 'A sound that can be heard clearly enough to be perceived.',
+                example: 'Her whisper was barely audible.',
+              },
+            ],
+          },
+          {
+            partOfSpeech: 'adjective',
+            definitions: [
+              {
+                definition: 'Able to be heard.',
+                example: 'The alarm was audible from the street.',
+              },
+            ],
+          },
+        ],
+      },
+    ];
+
+    const result = normalizeApiResponse(response);
+
+    expect(result.meanings[0].definitions[0]).toBe(
+      'A sound that can be heard clearly enough to be perceived.'
+    );
+    expect(result.meanings[1].definitions[0]).toBe('Able to be heard.');
   });
 });
 

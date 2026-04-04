@@ -38,6 +38,61 @@ interface DictionaryApiEntry {
 
 type DictionaryApiResponse = DictionaryApiEntry[];
 
+const DOMAIN_OR_ARCHAIC_PATTERNS = [
+  /\barchaic\b/i,
+  /\bobsolete\b/i,
+  /\bchiefly\b.*\blaw\b/i,
+  /\b(in|of)\s+(heraldry|medicine|botany|zoology|sports?|football|cricket|nautical|phonetics)\b/i,
+  /\bline of scrimmage\b/i,
+  /\bto wind round;?\s*to entwine\b/i,
+];
+
+const GENERAL_PARTS_OF_SPEECH = ['adjective', 'noun', 'verb', 'adverb'];
+
+function scoreDefinition(definition: DictionaryApiDefinition): number {
+  let score = 0;
+  const text = definition.definition.trim();
+
+  if (definition.example) {
+    score += 4;
+  }
+
+  if (text.length >= 20 && text.length <= 220) {
+    score += 2;
+  }
+
+  if (DOMAIN_OR_ARCHAIC_PATTERNS.some((pattern) => pattern.test(text))) {
+    score -= 10;
+  }
+
+  if (/^to\s+[a-z]/i.test(text)) {
+    score += 1;
+  }
+
+  return score;
+}
+
+function scoreMeaning(meaning: DictionaryApiMeaning): number {
+  const definitionScore = meaning.definitions[0] ? scoreDefinition(meaning.definitions[0]) : -10;
+  const posBonus = GENERAL_PARTS_OF_SPEECH.includes(meaning.partOfSpeech.toLowerCase()) ? 2 : 0;
+  return definitionScore + posBonus;
+}
+
+function prioritizeMeanings(meanings: DictionaryApiMeaning[]): DictionaryApiMeaning[] {
+  return meanings
+    .map((meaning, index) => ({
+      meaning: {
+        ...meaning,
+        definitions: [...meaning.definitions].sort(
+          (a, b) => scoreDefinition(b) - scoreDefinition(a)
+        ),
+      },
+      index,
+    }))
+    .sort((a, b) => scoreMeaning(b.meaning) - scoreMeaning(a.meaning) || a.index - b.index)
+    .map(({ meaning }) => meaning);
+}
+
 /**
  * Normalize DictionaryAPI response to WordCard format
  */
@@ -62,7 +117,7 @@ export function normalizeApiResponse(entries: DictionaryApiResponse): WordCard {
   }
 
   // Normalize meanings
-  const meanings: WordMeaning[] = entry.meanings.map((m) => ({
+  const meanings: WordMeaning[] = prioritizeMeanings(entry.meanings).map((m) => ({
     partOfSpeech: m.partOfSpeech,
     definitions: m.definitions.map((d) => d.definition),
     examples: m.definitions.filter((d) => d.example).map((d) => d.example as string),
