@@ -3,6 +3,7 @@ import {
   type WordCard,
   type WordDetailsStatus,
   type WordDifficulty,
+  type WordSelectionFallbackReason,
 } from '@word-of-the-day/shared';
 
 import {
@@ -43,6 +44,7 @@ export interface DailyWordPayload {
     requestedDifficulty: WordDifficulty | null;
     effectiveDifficulty: WordDifficulty | null;
     usedFallback: boolean;
+    fallbackReason: WordSelectionFallbackReason | null;
   };
 }
 
@@ -443,6 +445,38 @@ export interface AdminWordsResponse {
   offset: number;
 }
 
+export interface WordPoolHealth {
+  minimumAdvancedReadyWords: number;
+  advancedHealthy: boolean;
+  byDifficulty: Record<
+    WordDifficulty,
+    {
+      total: number;
+      enabled: number;
+      ready: number;
+      pending: number;
+      failed: number;
+      notFound: number;
+    }
+  >;
+  bySource: Array<{
+    source: string;
+    difficultyCategory: WordDifficulty;
+    total: number;
+    ready: number;
+  }>;
+  upcomingPreview: Record<
+    WordDifficulty,
+    Array<{
+      id: number;
+      word: string;
+      tier: number | null;
+      source: string;
+      detailsStatus: WordDetailsStatus | null;
+    }>
+  >;
+}
+
 export interface BulkCreateResult {
   created: number;
   errors: Array<{ index: number; error: string }>;
@@ -491,4 +525,8 @@ export async function bulkCreateAdminWords(words: WordInput[]): Promise<BulkCrea
     method: 'POST',
     body: JSON.stringify({ words }),
   });
+}
+
+export async function fetchWordPoolHealth(): Promise<WordPoolHealth> {
+  return apiFetch<WordPoolHealth>('/admin/word-pool/health');
 }

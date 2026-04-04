@@ -15,10 +15,12 @@ import { useCallback, useEffect, useState } from 'preact/hooks';
 import {
   AdminWord,
   AdminWordsResponse,
+  WordPoolHealth,
   bulkCreateAdminWords,
   createAdminWord,
   deleteAdminWord,
   fetchAdminWords,
+  fetchWordPoolHealth,
   updateAdminWord,
   WordInput,
 } from '../../api';
@@ -386,6 +388,7 @@ function BulkUpload({ onClose, onSuccess }: { onClose: () => void; onSuccess: ()
 
 export function WordManagement() {
   const [data, setData] = useState<AdminWordsResponse | null>(null);
+  const [poolHealth, setPoolHealth] = useState<WordPoolHealth | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
@@ -403,12 +406,16 @@ export function WordManagement() {
     setLoading(true);
     setError(null);
     try {
-      const result = await fetchAdminWords({
-        limit,
-        offset: page * limit,
-        search: search || undefined,
-      });
+      const [result, health] = await Promise.all([
+        fetchAdminWords({
+          limit,
+          offset: page * limit,
+          search: search || undefined,
+        }),
+        fetchWordPoolHealth(),
+      ]);
       setData(result);
+      setPoolHealth(health);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load words');
     } finally {
@@ -513,6 +520,48 @@ export function WordManagement() {
           </Button>
         </div>
       </div>
+
+      {poolHealth ? (
+        <div className="mb-4 space-y-3 rounded-xl border border-[rgba(30,27,22,0.08)] bg-white p-3">
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm font-semibold text-ink">Pool Health</p>
+            <p
+              className={`text-xs font-medium ${
+                poolHealth.advancedHealthy ? 'text-[#166534]' : 'text-[#9a3412]'
+              }`}
+            >
+              Advanced ready {poolHealth.byDifficulty.advanced.ready}/
+              {poolHealth.minimumAdvancedReadyWords} minimum
+            </p>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-3">
+            {(['easy', 'balanced', 'advanced'] as const).map((difficultyCategory) => {
+              const stats = poolHealth.byDifficulty[difficultyCategory];
+              return (
+                <div
+                  key={difficultyCategory}
+                  className="rounded-lg bg-surface p-3 text-xs text-muted"
+                >
+                  <p className="font-semibold uppercase tracking-[0.08em] text-ink">
+                    {difficultyCategory}
+                  </p>
+                  <p className="mt-2">
+                    Ready {stats.ready} / Enabled {stats.enabled} / Total {stats.total}
+                  </p>
+                  <p className="mt-1">
+                    Pending {stats.pending} / Failed {stats.failed} / Missing {stats.notFound}
+                  </p>
+                  <p className="mt-2 line-clamp-2">
+                    Upcoming:{' '}
+                    {poolHealth.upcomingPreview[difficultyCategory].map((w) => w.word).join(', ') ||
+                      'None'}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
 
       {/* Search */}
       <form onSubmit={handleSearch} className="mb-4 flex gap-2">

@@ -99,6 +99,7 @@ export async function processDueSchedules(env: Env): Promise<CronStats> {
                   source: 'scheduled',
                   requested_difficulty: selection.requestedDifficulty,
                   effective_difficulty: selection.effectiveDifficulty,
+                  fallback_reason: selection.fallbackReason ?? 'unknown',
                 },
               })
             );

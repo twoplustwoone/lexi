@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'preact/hooks';
-import type { WordCard, WordDetailsStatus } from '@word-of-the-day/shared';
+import type {
+  WordCard,
+  WordDetailsStatus,
+  WordDifficulty,
+  WordSelectionFallbackReason,
+} from '@word-of-the-day/shared';
 
 import { fetchTodayWord, markWordViewed, syncHistoryCache, syncSettingsCache } from '../api';
 import { Button } from '../components/Button';
@@ -19,6 +24,12 @@ type WordDisplay = {
   date: string;
   detailsStatus: WordDetailsStatus;
   details: WordCard | null;
+  selection?: {
+    requestedDifficulty: WordDifficulty | null;
+    effectiveDifficulty: WordDifficulty | null;
+    usedFallback: boolean;
+    fallbackReason: WordSelectionFallbackReason | null;
+  };
 };
 
 let cachedWord: WordDisplay | null = null;
@@ -46,6 +57,7 @@ export function Home({ user, onOpenAuth }: HomeProps) {
           date: today.day,
           detailsStatus: today.detailsStatus,
           details: today.details,
+          selection: today.selection,
         };
         cachedWord = nextWord;
         setWord(nextWord);
@@ -65,6 +77,7 @@ export function Home({ user, onOpenAuth }: HomeProps) {
                   date: updated.day,
                   detailsStatus: updated.detailsStatus,
                   details: updated.details,
+                  selection: updated.selection,
                 };
                 cachedWord = updatedWord;
                 setWord(updatedWord);
@@ -168,6 +181,16 @@ export function Home({ user, onOpenAuth }: HomeProps) {
   const audioUrl = details?.audioUrl || null;
   const etymology = details?.etymology || null;
   const pronunciationUnavailable = !audioUrl && !canUseSpeechSynthesis();
+  const fallbackNotice =
+    word.selection?.usedFallback &&
+    word.selection.requestedDifficulty &&
+    word.selection.effectiveDifficulty
+      ? `Your ${word.selection.requestedDifficulty} pool ${
+          word.selection.fallbackReason === 'requested_pool_exhausted'
+            ? 'is exhausted for this cycle'
+            : 'has no ready words yet'
+        }, so today’s word was served from ${word.selection.effectiveDifficulty}.`
+      : null;
 
   const handlePlayPronunciation = async () => {
     setPronunciationMessage(null);
@@ -240,6 +263,11 @@ export function Home({ user, onOpenAuth }: HomeProps) {
       {reminder ? (
         <div className="rounded-2xl border border-dashed border-[rgba(30,27,22,0.2)] bg-banner px-4 py-3">
           {reminder}
+        </div>
+      ) : null}
+      {fallbackNotice ? (
+        <div className="rounded-2xl border border-[rgba(181,96,36,0.2)] bg-[#fff7ed] px-4 py-3 text-sm text-[#9a3412]">
+          {fallbackNotice}
         </div>
       ) : null}
       <article className={`${cardBase} p-6`}>

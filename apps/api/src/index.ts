@@ -14,6 +14,7 @@ import {
   uuidSchema,
   type WordCard,
   type WordDetailsStatus,
+  wordDifficultySchema,
 } from '@word-of-the-day/shared';
 
 import { buildServerEvent, recordEvent } from './analytics';
@@ -61,10 +62,27 @@ import {
   listWordPool,
   importWords,
   getEnrichmentStats,
+  getWordPoolHealth,
 } from './words/index';
 import { processEnrichmentQueue, triggerSingleEnrichment, EnrichmentService } from './enrichment';
 
 const app = new Hono<{ Bindings: Env }>();
+
+app.get('/api/admin/word-pool/health', async (c) => {
+  const cookies = parseCookies(c.req.header('cookie') ?? null);
+  const token = cookies.session ?? null;
+  const userId = await getSessionUserId(c.env, token);
+  if (!userId) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const user = await getUserById(c.env, userId);
+  if (!user || user.is_admin !== 1) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+
+  const health = await getWordPoolHealth(c.env);
+  return c.json(health);
+});
 
 app.onError((err, c) => {
   // Ensure CORS headers are set on error responses
@@ -242,6 +260,7 @@ app.get('/api/word/today', async (c) => {
             source: 'app',
             requested_difficulty: selection.requestedDifficulty,
             effective_difficulty: selection.effectiveDifficulty,
+            fallback_reason: selection.fallbackReason ?? 'unknown',
           },
         })
       );
@@ -267,6 +286,7 @@ app.get('/api/word/today', async (c) => {
       requestedDifficulty: selection.requestedDifficulty,
       effectiveDifficulty: selection.effectiveDifficulty,
       usedFallback: selection.usedFallback,
+      fallbackReason: selection.fallbackReason,
     },
   });
 });
@@ -1874,6 +1894,8 @@ app.get('/api/admin/word-pool', async (c) => {
   const enabledParam = c.req.query('enabled');
   const enabled = enabledParam === 'true' ? true : enabledParam === 'false' ? false : undefined;
   const search = c.req.query('search');
+  const rawDifficulty = c.req.query('difficultyCategory');
+  const difficultyCategory = rawDifficulty ? wordDifficultySchema.parse(rawDifficulty) : undefined;
 
   const { words, total } = await listWordPool(c.env, {
     limit,
@@ -1881,6 +1903,7 @@ app.get('/api/admin/word-pool', async (c) => {
     status,
     enabled,
     search,
+    difficultyCategory,
   });
 
   return c.json({
@@ -1889,6 +1912,7 @@ app.get('/api/admin/word-pool', async (c) => {
       word: w.word,
       enabled: w.enabled === 1,
       tier: w.tier,
+      difficultyCategory: w.difficulty_category,
       source: w.source,
       createdAt: w.created_at,
       detailsStatus: w.details_status,
@@ -1916,6 +1940,7 @@ app.post('/api/admin/word-pool/import', async (c) => {
     .object({
       words: z.array(z.string().min(1).max(50)).min(1).max(5000),
       source: z.string().min(1).max(50).default('import'),
+      difficultyCategory: wordDifficultySchema.optional(),
     })
     .parse(body);
 
@@ -1925,7 +1950,7 @@ app.post('/api/admin/word-pool/import', async (c) => {
     .filter((w) => /^[a-z]{4,12}$/.test(w))
     .filter((v, i, arr) => arr.indexOf(v) === i); // dedupe
 
-  const result = await importWords(c.env, filtered, parsed.source);
+  const result = await importWords(c.env, filtered, parsed.source, parsed.difficultyCategory);
 
   return c.json({
     ...result,

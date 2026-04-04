@@ -211,12 +211,14 @@ describe('settings routes', () => {
           requestedDifficulty: string | null;
           effectiveDifficulty: string | null;
           usedFallback: boolean;
+          fallbackReason: string | null;
         };
       };
       expect(payload.wordPoolId).toBe(12001);
       expect(payload.selection.requestedDifficulty).toBe('easy');
       expect(payload.selection.effectiveDifficulty).toBe('balanced');
       expect(payload.selection.usedFallback).toBe(true);
+      expect(payload.selection.fallbackReason).toBe('requested_pool_empty');
     } finally {
       await cleanup();
     }
