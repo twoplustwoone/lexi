@@ -7,6 +7,7 @@ export interface Env {
   SESSION_SECRET: string;
   SESSION_COOKIE_SAMESITE: string;
   COOKIE_SECURE: string;
+  ANON_TTL_DAYS?: string;
   NOTIFICATION_SAME_DAY_DELIVERY?: string;
   VAPID_PUBLIC_KEY: string;
   VAPID_PRIVATE_KEY: string;
@@ -14,5 +15,6 @@ export interface Env {
   GOOGLE_CLIENT_ID: string;
   RESEND_API_KEY: string;
   RESEND_FROM: string;
+  PUSH_ENDPOINT_ALLOWLIST?: string;
   MERRIAM_WEBSTER_API_KEY?: string;
 }

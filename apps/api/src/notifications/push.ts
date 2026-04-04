@@ -16,6 +16,38 @@ interface SubscriptionKeys {
   auth: string;
 }
 
+const DEFAULT_PUSH_ALLOWLIST = [
+  'fcm.googleapis.com',
+  'push.services.mozilla.com',
+  'web.push.apple.com',
+  'notify.windows.com',
+];
+
+function normalizeAllowlist(allowlist?: string): string[] {
+  const extra =
+    allowlist
+      ?.split(',')
+      .map((entry) => entry.trim().toLowerCase())
+      .map((entry) => entry.replace(/^\*\./, ''))
+      .filter(Boolean) ?? [];
+  return Array.from(new Set([...DEFAULT_PUSH_ALLOWLIST, ...extra]));
+}
+
+export function isAllowedPushEndpoint(endpoint: string, allowlist?: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(endpoint);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== 'https:') {
+    return false;
+  }
+  const host = url.hostname.toLowerCase();
+  const allowed = normalizeAllowlist(allowlist);
+  return allowed.some((entry) => host === entry || host.endsWith(`.${entry}`));
+}
+
 function concatBytes(...chunks: Uint8Array[]): Uint8Array {
   const length = chunks.reduce((total, chunk) => total + chunk.length, 0);
   const result = new Uint8Array(length);

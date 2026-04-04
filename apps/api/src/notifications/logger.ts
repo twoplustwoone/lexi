@@ -3,7 +3,7 @@ import { DateTime } from 'luxon';
 import { Env } from '../env';
 
 export type LogLevel = 'info' | 'warn' | 'error';
-export type LogCategory = 'cron' | 'push' | 'subscription' | 'vapid';
+export type LogCategory = 'cron' | 'push' | 'subscription' | 'vapid' | 'rate_limit';
 
 export interface LogEntry {
   level: LogLevel;

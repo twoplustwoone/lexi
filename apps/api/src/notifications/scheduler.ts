@@ -6,7 +6,7 @@ import { buildServerEvent, recordEvent } from '../analytics';
 import { Env } from '../env';
 import { getDailyWordForUser } from '../words/index';
 import { logError, logInfo, logWarn } from './logger';
-import { sendWebPushNotification } from './push';
+import { isAllowedPushEndpoint, sendWebPushNotification } from './push';
 
 const BATCH_SIZE = 50;
 
@@ -198,6 +198,20 @@ async function sendPushNotificationsForUser(env: Env, userId: string): Promise<P
     results.map(async (sub) => {
       const endpointDomain = new URL(sub.endpoint).host;
       try {
+        if (!isAllowedPushEndpoint(sub.endpoint, env.PUSH_ENDPOINT_ALLOWLIST)) {
+          await env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?')
+            .bind(sub.endpoint)
+            .run();
+          failed++;
+          await logWarn(
+            env,
+            'push',
+            'Push endpoint not allowed; subscription removed',
+            { endpointDomain },
+            userId
+          );
+          return;
+        }
         const response = await sendWebPushNotification({
           endpoint: sub.endpoint,
           publicKey: env.VAPID_PUBLIC_KEY,

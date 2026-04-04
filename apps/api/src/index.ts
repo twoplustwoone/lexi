@@ -26,6 +26,7 @@ import { resolveAnonymousId, resolveUserId } from './auth/identity';
 import { mergeAnonymousIntoUser } from './auth/merge';
 import { buildExpiry, createCodeHash, generateNumericCode } from './auth/otp';
 import {
+  buildAnonCookie,
   buildSessionCookie,
   clearSession,
   createSession,
@@ -42,8 +43,13 @@ import {
   upsertNotificationSchedule,
 } from './db';
 import { logInfo, logWarn, LogCategory, LogLevel, queryLogs } from './notifications/logger';
-import { sendWebPushNotification, WebPushPayload } from './notifications/push';
+import {
+  isAllowedPushEndpoint,
+  sendWebPushNotification,
+  WebPushPayload,
+} from './notifications/push';
 import { processDueSchedules } from './notifications/scheduler';
+import { checkRateLimit, getClientIp } from './security/rateLimit';
 import { base64UrlDecode } from './utils/base64';
 import { hashCode, hashPassword, verifyPassword } from './utils/crypto';
 import {
@@ -73,21 +79,64 @@ import { processEnrichmentQueue, triggerSingleEnrichment, EnrichmentService } fr
 
 const app = new Hono<{ Bindings: Env }>();
 
-app.get('/api/admin/word-pool/health', async (c) => {
-  const cookies = parseCookies(c.req.header('cookie') ?? null);
-  const token = cookies.session ?? null;
-  const userId = await getSessionUserId(c.env, token);
-  if (!userId) {
-    return c.json({ error: 'Unauthorized' }, 401);
-  }
-  const user = await getUserById(c.env, userId);
-  if (!user || user.is_admin !== 1) {
-    return c.json({ error: 'Forbidden' }, 403);
-  }
+function appendSetCookie(
+  c: { header: (name: string, value: string, options?: { append?: boolean }) => void },
+  cookie: string
+): void {
+  c.header('Set-Cookie', cookie, { append: true });
+}
 
-  const health = await getWordPoolHealth(c.env);
-  return c.json(health);
-});
+function normalizeKeyPart(value: string): string {
+  return encodeURIComponent(value.trim().toLowerCase());
+}
+
+async function resolveAnonymousIdForRequest(c: {
+  env: Env;
+  req: { raw: Request };
+  header: (name: string, value: string, options?: { append?: boolean }) => void;
+}): Promise<string | null> {
+  return resolveAnonymousId(c.env, c.req.raw, {
+    setCookie: (cookie) => appendSetCookie(c, cookie),
+  });
+}
+
+async function resolveUserIdForRequest(c: {
+  env: Env;
+  req: { raw: Request };
+  header: (name: string, value: string, options?: { append?: boolean }) => void;
+}): Promise<string | null> {
+  return resolveUserId(c.env, c.req.raw, {
+    setCookie: (cookie) => appendSetCookie(c, cookie),
+  });
+}
+
+async function enforceRateLimit(
+  c: {
+    env: Env;
+    req: { raw: Request };
+    header: (name: string, value: string) => void;
+    json: (object: unknown, status?: number) => Response;
+  },
+  key: string,
+  limit: number,
+  windowSeconds: number,
+  metadata?: Record<string, unknown>
+): Promise<Response | null> {
+  const result = await checkRateLimit(c.env, key, limit, windowSeconds);
+  if (!result.allowed) {
+    if (result.retryAfter !== null) {
+      c.header('Retry-After', String(result.retryAfter));
+    }
+    await logWarn(c.env, 'rate_limit', 'Rate limit exceeded', {
+      key,
+      limit,
+      windowSeconds,
+      ...metadata,
+    });
+    return c.json({ error: 'Too many requests' }, 429);
+  }
+  return null;
+}
 
 app.onError((err, c) => {
   // Ensure CORS headers are set on error responses
@@ -95,10 +144,9 @@ app.onError((err, c) => {
   const allowed = c.env.CORS_ALLOW_ORIGIN?.split(',').map((value) => value.trim());
   if (origin && allowed?.includes(origin)) {
     c.header('Access-Control-Allow-Origin', origin);
-  } else if (allowed?.length) {
-    c.header('Access-Control-Allow-Origin', allowed[0]);
   }
   c.header('Access-Control-Allow-Credentials', 'true');
+  c.header('Vary', 'Origin', { append: true });
 
   if (err instanceof ZodError) {
     const message = err.issues.map((issue) => issue.message).join(', ');
@@ -113,12 +161,11 @@ app.use('*', async (c, next) => {
   const allowed = c.env.CORS_ALLOW_ORIGIN?.split(',').map((value) => value.trim());
   if (origin && allowed?.includes(origin)) {
     c.header('Access-Control-Allow-Origin', origin);
-  } else if (allowed?.length) {
-    c.header('Access-Control-Allow-Origin', allowed[0]);
   }
   c.header('Access-Control-Allow-Credentials', 'true');
   c.header('Access-Control-Allow-Headers', 'Content-Type, X-Anon-Id, X-Timezone');
   c.header('Access-Control-Allow-Methods', 'GET,POST,PUT,OPTIONS');
+  c.header('Vary', 'Origin', { append: true });
   if (c.req.method === 'OPTIONS') {
     return c.body(null, 204);
   }
@@ -130,35 +177,56 @@ app.get('/api/health', (c) => c.json({ ok: true }));
 app.post('/api/identity/anonymous', async (c) => {
   const body = await c.req.json();
   const schema = z.object({
-    id: uuidSchema,
+    id: uuidSchema.optional(),
     timezone: timeZoneSchema,
   });
   const parsed = schema.parse(body);
-  const existing = await getUserById(c.env, parsed.id);
-  if (!existing) {
-    await createAnonymousUser(c.env, parsed.id, parsed.timezone, DEFAULT_PREFERENCES);
-  } else if (existing.is_anonymous !== 1) {
-    return c.json({ error: 'User already exists' }, 409);
-  } else if (!existing.merged_into_user_id && existing.timezone !== parsed.timezone) {
-    await updateUserTimezone(c.env, parsed.id, parsed.timezone);
-  }
+  const cookieHeader = c.req.header('cookie');
+  const cookies = parseCookies(cookieHeader ?? null);
+  const cookieId = cookies.anon_id ?? null;
+  const headerId = c.req.header('x-anon-id') ?? null;
+  const requestedId = parsed.id ?? null;
+  const candidateId = cookieId ?? headerId ?? requestedId;
+  const idSource = cookieId ? 'cookie' : headerId ? 'header' : requestedId ? 'body' : 'generated';
+
+  let userId = candidateId ?? crypto.randomUUID();
+  const existing = candidateId ? await getUserById(c.env, candidateId) : null;
 
   if (existing?.merged_into_user_id) {
+    userId = crypto.randomUUID();
+    await createAnonymousUser(c.env, userId, parsed.timezone, DEFAULT_PREFERENCES);
+    await ensureDefaultSchedule(c.env, userId, parsed.timezone);
+    appendSetCookie(c, buildAnonCookie(c.env, userId));
     return c.json({
       ok: true,
-      user_id: parsed.id,
+      user_id: userId,
       merged_into_user_id: existing.merged_into_user_id,
     });
   }
 
-  const schedule = await getNotificationSchedule(c.env, parsed.id);
+  if (!existing) {
+    await createAnonymousUser(c.env, userId, parsed.timezone, DEFAULT_PREFERENCES);
+  } else if (existing.is_anonymous !== 1) {
+    if (idSource === 'body') {
+      return c.json({ error: 'User already exists' }, 409);
+    }
+    userId = crypto.randomUUID();
+    await createAnonymousUser(c.env, userId, parsed.timezone, DEFAULT_PREFERENCES);
+    await ensureDefaultSchedule(c.env, userId, parsed.timezone);
+    appendSetCookie(c, buildAnonCookie(c.env, userId));
+    return c.json({ ok: true, user_id: userId, merged_into_user_id: null });
+  } else if (!existing.merged_into_user_id && existing.timezone !== parsed.timezone) {
+    await updateUserTimezone(c.env, userId, parsed.timezone);
+  }
+
+  const schedule = await getNotificationSchedule(c.env, userId);
   if (!schedule) {
     const nextDeliveryAt = computeInitialDelivery(
       parsed.timezone,
       DEFAULT_PREFERENCES.delivery_time
     );
     await upsertNotificationSchedule(c.env, {
-      userId: parsed.id,
+      userId,
       deliveryTime: DEFAULT_PREFERENCES.delivery_time,
       timezone: parsed.timezone,
       enabled: false,
@@ -166,10 +234,12 @@ app.post('/api/identity/anonymous', async (c) => {
     });
   }
 
+  appendSetCookie(c, buildAnonCookie(c.env, userId));
+
   return c.json({
     ok: true,
-    user_id: parsed.id,
-    merged_into_user_id: existing?.merged_into_user_id,
+    user_id: userId,
+    merged_into_user_id: existing?.merged_into_user_id ?? null,
   });
 });
 
@@ -190,7 +260,7 @@ app.get('/api/me', async (c) => {
       is_admin: user?.is_admin === 1,
     });
   }
-  const anonId = await resolveAnonymousId(c.env, c.req.raw);
+  const anonId = await resolveAnonymousIdForRequest(c);
   return c.json({
     user_id: anonId ?? null,
     is_authenticated: false,
@@ -200,7 +270,7 @@ app.get('/api/me', async (c) => {
 });
 
 app.get('/api/word/today', async (c) => {
-  const userId = await resolveUserId(c.env, c.req.raw);
+  const userId = await resolveUserIdForRequest(c);
   if (!userId) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
@@ -297,7 +367,7 @@ app.get('/api/word/today', async (c) => {
 });
 
 app.post('/api/word/view', async (c) => {
-  const userId = await resolveUserId(c.env, c.req.raw);
+  const userId = await resolveUserIdForRequest(c);
   if (!userId) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
@@ -317,7 +387,7 @@ app.post('/api/word/view', async (c) => {
 });
 
 app.get('/api/history', async (c) => {
-  const userId = await resolveUserId(c.env, c.req.raw);
+  const userId = await resolveUserIdForRequest(c);
   if (!userId) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
@@ -377,7 +447,7 @@ app.get('/api/history', async (c) => {
 });
 
 app.get('/api/settings', async (c) => {
-  const userId = await resolveUserId(c.env, c.req.raw);
+  const userId = await resolveUserIdForRequest(c);
   if (!userId) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
@@ -426,7 +496,7 @@ app.get('/api/settings', async (c) => {
 });
 
 app.put('/api/settings', async (c) => {
-  const userId = await resolveUserId(c.env, c.req.raw);
+  const userId = await resolveUserIdForRequest(c);
   if (!userId) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
@@ -515,12 +585,33 @@ app.get('/api/notifications/vapid', (c) => {
 });
 
 app.post('/api/notifications/subscribe', async (c) => {
-  const userId = await resolveUserId(c.env, c.req.raw);
+  const userId = await resolveUserIdForRequest(c);
   if (!userId) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
   const body = await c.req.json();
   const parsed = pushSubscriptionSchema.parse(body);
+  if (!isAllowedPushEndpoint(parsed.endpoint, c.env.PUSH_ENDPOINT_ALLOWLIST)) {
+    return c.json({ error: 'Push endpoint not allowed' }, 400);
+  }
+  const subscribeLimit = await enforceRateLimit(
+    c,
+    `rl:notifications:subscribe:user:${normalizeKeyPart(userId)}`,
+    10,
+    86400,
+    { userId }
+  );
+  if (subscribeLimit) {
+    return subscribeLimit;
+  }
+  const existingCount = await c.env.DB.prepare(
+    'SELECT COUNT(*) as count FROM push_subscriptions WHERE user_id = ?'
+  )
+    .bind(userId)
+    .first();
+  if (Number((existingCount as { count: number } | null)?.count ?? 0) >= 5) {
+    return c.json({ error: 'Subscription limit reached' }, 400);
+  }
   await c.env.DB.prepare(
     `INSERT OR REPLACE INTO push_subscriptions (id, user_id, endpoint, p256dh, auth, expiration_time, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`
@@ -551,7 +642,7 @@ app.post('/api/notifications/subscribe', async (c) => {
 });
 
 app.post('/api/notifications/unsubscribe', async (c) => {
-  const userId = await resolveUserId(c.env, c.req.raw);
+  const userId = await resolveUserIdForRequest(c);
   if (!userId) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
@@ -571,9 +662,19 @@ app.post('/api/notifications/unsubscribe', async (c) => {
 });
 
 app.post('/api/events', async (c) => {
-  const userId = await resolveUserId(c.env, c.req.raw);
+  const userId = await resolveUserIdForRequest(c);
   if (!userId) {
     return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const userLimit = await enforceRateLimit(
+    c,
+    `rl:events:user:${normalizeKeyPart(userId)}`,
+    120,
+    60,
+    { userId }
+  );
+  if (userLimit) {
+    return userLimit;
   }
   const body = await c.req.json();
   const parsed = eventSchema.parse(body);
@@ -594,6 +695,11 @@ app.post('/api/events', async (c) => {
 app.post('/api/auth/methods', async (c) => {
   const body = await c.req.json();
   const parsed = z.object({ email: emailSchema }).parse(body);
+  const ip = normalizeKeyPart(getClientIp(c.req.raw) ?? 'unknown');
+  const rateLimitResponse = await enforceRateLimit(c, `rl:auth:methods:ip:${ip}`, 10, 60, { ip });
+  if (rateLimitResponse) {
+    return rateLimitResponse;
+  }
 
   const passwordRecord = await c.env.DB.prepare(
     'SELECT password_set FROM auth_email_password WHERE email = ?'
@@ -623,6 +729,11 @@ app.post('/api/auth/methods', async (c) => {
 app.post('/api/auth/signup', async (c) => {
   const body = await c.req.json();
   const parsed = z.object({ email: emailSchema, password: passwordSchema }).parse(body);
+  const ip = normalizeKeyPart(getClientIp(c.req.raw) ?? 'unknown');
+  const rateLimitResponse = await enforceRateLimit(c, `rl:auth:signup:ip:${ip}`, 10, 60, { ip });
+  if (rateLimitResponse) {
+    return rateLimitResponse;
+  }
   const existing = await c.env.DB.prepare('SELECT user_id FROM auth_email_password WHERE email = ?')
     .bind(parsed.email)
     .first();
@@ -638,7 +749,7 @@ app.post('/api/auth/signup', async (c) => {
     return c.json({ error: 'Email already in use' }, 409);
   }
 
-  const anonId = await resolveAnonymousId(c.env, c.req.raw);
+  const anonId = await resolveAnonymousIdForRequest(c);
   let userId = anonId;
   if (!userId) {
     const timezone = c.req.header('x-timezone') ?? 'UTC';
@@ -660,7 +771,7 @@ app.post('/api/auth/signup', async (c) => {
     .run();
 
   const session = await createSession(c.env, userId);
-  c.header('Set-Cookie', buildSessionCookie(c.env, session.token));
+  appendSetCookie(c, buildSessionCookie(c.env, session.token));
 
   await recordEvent(
     c.env,
@@ -686,6 +797,18 @@ app.post('/api/auth/login', async (c) => {
     .parse(body);
 
   const identifier = parsed.email ?? parsed.identifier ?? '';
+  const ip = normalizeKeyPart(getClientIp(c.req.raw) ?? 'unknown');
+  const ipLimit = await enforceRateLimit(c, `rl:auth:login:ip:${ip}`, 10, 60, { ip });
+  if (ipLimit) {
+    return ipLimit;
+  }
+  const identifierKey = normalizeKeyPart(identifier);
+  const idLimit = await enforceRateLimit(c, `rl:auth:login:identifier:${identifierKey}`, 5, 600, {
+    identifier: identifierKey,
+  });
+  if (idLimit) {
+    return idLimit;
+  }
   let record = await c.env.DB.prepare(
     'SELECT user_id, password_hash FROM auth_email_password WHERE email = ?'
   )
@@ -712,12 +835,12 @@ app.post('/api/auth/login', async (c) => {
   if (!ok) {
     return c.json({ error: 'Invalid credentials' }, 401);
   }
-  const anonId = await resolveAnonymousId(c.env, c.req.raw);
+  const anonId = await resolveAnonymousIdForRequest(c);
   if (anonId) {
     await mergeAnonymousIntoUser(c.env, anonId, record.user_id as string);
   }
   const session = await createSession(c.env, record.user_id as string);
-  c.header('Set-Cookie', buildSessionCookie(c.env, session.token));
+  appendSetCookie(c, buildSessionCookie(c.env, session.token));
 
   await recordEvent(
     c.env,
@@ -734,6 +857,22 @@ app.post('/api/auth/login', async (c) => {
 app.post('/api/auth/email/code/request', async (c) => {
   const body = await c.req.json();
   const parsed = z.object({ email: emailSchema }).parse(body);
+  const ip = normalizeKeyPart(getClientIp(c.req.raw) ?? 'unknown');
+  const ipLimit = await enforceRateLimit(c, `rl:auth:email-code:request:ip:${ip}`, 5, 60, { ip });
+  if (ipLimit) {
+    return ipLimit;
+  }
+  const emailKey = normalizeKeyPart(parsed.email);
+  const emailLimit = await enforceRateLimit(
+    c,
+    `rl:auth:email-code:request:email:${emailKey}`,
+    3,
+    600,
+    { email: emailKey }
+  );
+  if (emailLimit) {
+    return emailLimit;
+  }
   const code = generateNumericCode();
   const { hash, salt } = createCodeHash(code);
   await c.env.DB.prepare(
@@ -758,6 +897,22 @@ app.post('/api/auth/email/code/request', async (c) => {
 app.post('/api/auth/email/code/verify', async (c) => {
   const body = await c.req.json();
   const parsed = z.object({ email: emailSchema, code: z.string().min(4) }).parse(body);
+  const ip = normalizeKeyPart(getClientIp(c.req.raw) ?? 'unknown');
+  const ipLimit = await enforceRateLimit(c, `rl:auth:email-code:verify:ip:${ip}`, 10, 60, { ip });
+  if (ipLimit) {
+    return ipLimit;
+  }
+  const emailKey = normalizeKeyPart(parsed.email);
+  const emailLimit = await enforceRateLimit(
+    c,
+    `rl:auth:email-code:verify:email:${emailKey}`,
+    5,
+    600,
+    { email: emailKey }
+  );
+  if (emailLimit) {
+    return emailLimit;
+  }
   const record = await c.env.DB.prepare(
     `SELECT * FROM auth_codes WHERE target = ? AND purpose = 'email_code' AND consumed_at IS NULL
      ORDER BY created_at DESC LIMIT 1`
@@ -772,6 +927,25 @@ app.post('/api/auth/email/code/verify', async (c) => {
   }
   const expectedHash = hashCode(parsed.code, record.salt as string);
   if (expectedHash !== record.code_hash) {
+    const expiresAtMs = Date.parse(record.expires_at as string);
+    const ttlSeconds = Number.isFinite(expiresAtMs)
+      ? Math.max(Math.floor((expiresAtMs - Date.now()) / 1000), 1)
+      : 600;
+    const otpLimit = await checkRateLimit(c.env, `otp:attempts:${record.id}`, 5, ttlSeconds);
+    if (!otpLimit.allowed) {
+      const nowIso = DateTime.utc().toISO();
+      await c.env.DB.prepare('UPDATE auth_codes SET consumed_at = ? WHERE id = ?')
+        .bind(nowIso, record.id)
+        .run();
+      if (otpLimit.retryAfter !== null) {
+        c.header('Retry-After', String(otpLimit.retryAfter));
+      }
+      await logWarn(c.env, 'rate_limit', 'OTP attempts exceeded', {
+        email: emailKey,
+        recordId: record.id,
+      });
+      return c.json({ error: 'Too many attempts' }, 429);
+    }
     return c.json({ error: 'Invalid code' }, 401);
   }
 
@@ -797,7 +971,7 @@ app.post('/api/auth/email/code/verify', async (c) => {
     if (oauthUser) {
       userId = oauthUser.user_id as string;
     } else {
-      const anonId = await resolveAnonymousId(c.env, c.req.raw);
+      const anonId = await resolveAnonymousIdForRequest(c);
       if (anonId) {
         userId = anonId;
         const timezone = c.req.header('x-timezone') ?? 'UTC';
@@ -828,13 +1002,13 @@ app.post('/api/auth/email/code/verify', async (c) => {
       .run();
   }
 
-  const anonId = await resolveAnonymousId(c.env, c.req.raw);
+  const anonId = await resolveAnonymousIdForRequest(c);
   if (anonId && anonId !== userId) {
     await mergeAnonymousIntoUser(c.env, anonId, userId);
   }
 
   const session = await createSession(c.env, userId);
-  c.header('Set-Cookie', buildSessionCookie(c.env, session.token));
+  appendSetCookie(c, buildSessionCookie(c.env, session.token));
 
   if (createdAccount) {
     await recordEvent(
@@ -864,7 +1038,7 @@ app.post('/api/auth/google', async (c) => {
 
   let createdAccount = false;
   if (!userId) {
-    const anonId = await resolveAnonymousId(c.env, c.req.raw);
+    const anonId = await resolveAnonymousIdForRequest(c);
     if (anonId) {
       userId = anonId;
       const timezone = c.req.header('x-timezone') ?? 'UTC';
@@ -894,13 +1068,13 @@ app.post('/api/auth/google', async (c) => {
       .run();
   }
 
-  const anonId = await resolveAnonymousId(c.env, c.req.raw);
+  const anonId = await resolveAnonymousIdForRequest(c);
   if (anonId && anonId !== userId) {
     await mergeAnonymousIntoUser(c.env, anonId, userId);
   }
 
   const session = await createSession(c.env, userId);
-  c.header('Set-Cookie', buildSessionCookie(c.env, session.token));
+  appendSetCookie(c, buildSessionCookie(c.env, session.token));
 
   if (createdAccount) {
     await recordEvent(
@@ -920,7 +1094,7 @@ app.post('/api/auth/logout', async (c) => {
   const cookies = parseCookies(c.req.header('cookie') ?? null);
   const token = cookies.session ?? null;
   await clearSession(c.env, token);
-  c.header('Set-Cookie', buildSessionCookie(c.env, '', { clear: true }));
+  appendSetCookie(c, buildSessionCookie(c.env, '', { clear: true }));
   return c.json({ ok: true });
 });
 
@@ -1052,6 +1226,26 @@ app.post('/api/admin/notify', async (c) => {
 
   for (const sub of rows) {
     const endpointDomain = new URL(sub.endpoint).host;
+    if (!isAllowedPushEndpoint(sub.endpoint, c.env.PUSH_ENDPOINT_ALLOWLIST)) {
+      await c.env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?')
+        .bind(sub.endpoint)
+        .run();
+      await logWarn(
+        c.env,
+        'push',
+        'Push endpoint not allowed; subscription removed',
+        { endpointDomain },
+        sub.user_id
+      );
+      results.push({
+        userId: sub.user_id,
+        endpointDomain,
+        status: 0,
+        ok: false,
+        error: 'Push endpoint not allowed',
+      });
+      continue;
+    }
     try {
       const response = await sendWebPushNotification({
         endpoint: sub.endpoint,
@@ -2184,8 +2378,20 @@ app.get('/api/admin/enrichment/stats', async (c) => {
   return c.json(stats);
 });
 
-app.onError((err, c) => {
-  return c.json({ error: err.message ?? 'Server error' }, 500);
+app.get('/api/admin/word-pool/health', async (c) => {
+  const cookies = parseCookies(c.req.header('cookie') ?? null);
+  const token = cookies.session ?? null;
+  const userId = await getSessionUserId(c.env, token);
+  if (!userId) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const user = await getUserById(c.env, userId);
+  if (!user || user.is_admin !== 1) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+
+  const health = await getWordPoolHealth(c.env);
+  return c.json(health);
 });
 
 export default {

@@ -24,6 +24,8 @@ Required config
 Optional behavior
 
 - `NOTIFICATION_SAME_DAY_DELIVERY`: Set to `true` to allow same-day delivery when enabling notifications before the scheduled time.
+- `ANON_TTL_DAYS`: Number of days to keep anonymous identity cookies (defaults to `SESSION_TTL_DAYS`).
+- `PUSH_ENDPOINT_ALLOWLIST`: Comma-separated list of additional push endpoint host suffixes to allow.
 
 Optional integrations (enable when used)
 

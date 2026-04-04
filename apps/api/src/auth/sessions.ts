@@ -81,6 +81,28 @@ export function buildSessionCookie(
     .join('; ');
 }
 
+export function buildAnonCookie(
+  env: Env,
+  anonId: string,
+  options: { clear?: boolean } = {}
+): string {
+  const secure = env.COOKIE_SECURE === 'true';
+  const sameSite = env.SESSION_COOKIE_SAMESITE || 'Lax';
+  const ttlDays = Number(env.ANON_TTL_DAYS || env.SESSION_TTL_DAYS || '30');
+  const maxAge = options.clear ? 0 : ttlDays * 24 * 60 * 60;
+
+  return [
+    `anon_id=${options.clear ? '' : anonId}`,
+    'Path=/',
+    'HttpOnly',
+    `SameSite=${sameSite}`,
+    secure ? 'Secure' : null,
+    `Max-Age=${maxAge}`,
+  ]
+    .filter(Boolean)
+    .join('; ');
+}
+
 export function parseCookies(header: string | null): Record<string, string> {
   if (!header) {
     return {};

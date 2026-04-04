@@ -70,7 +70,6 @@ export interface AuthMethodsResponse {
 export async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers || {});
   headers.set('Content-Type', 'application/json');
-  headers.set('X-Anon-Id', getAnonymousId());
   headers.set('X-Timezone', getTimeZone());
 
   const response = await fetch(`${API_BASE}${path}`, {
@@ -101,25 +100,28 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
 
 export async function registerAnonymousIdentity(): Promise<void> {
   const timezone = getTimeZone();
-  let anonId = getAnonymousId();
-  const register = async (id: string) =>
-    apiFetch<{ ok: boolean; merged_into_user_id?: string | null }>('/identity/anonymous', {
-      method: 'POST',
-      body: JSON.stringify({ id, timezone }),
-    });
+  const register = async (id?: string) =>
+    apiFetch<{ ok: boolean; user_id: string; merged_into_user_id?: string | null }>(
+      '/identity/anonymous',
+      {
+        method: 'POST',
+        body: JSON.stringify(id ? { id, timezone } : { timezone }),
+      }
+    );
 
   try {
-    const response = await register(anonId);
-    if (response.merged_into_user_id) {
-      anonId = crypto.randomUUID();
-      setAnonymousId(anonId);
-      await register(anonId);
+    const response = await register();
+    if (response?.user_id && response.user_id !== getAnonymousId()) {
+      setAnonymousId(response.user_id);
     }
   } catch (error) {
     if (error instanceof Error && error.message === 'User already exists') {
-      anonId = crypto.randomUUID();
+      const anonId = crypto.randomUUID();
       setAnonymousId(anonId);
-      await register(anonId);
+      const response = await register(anonId);
+      if (response?.user_id && response.user_id !== anonId) {
+        setAnonymousId(response.user_id);
+      }
       return;
     }
     throw error;
@@ -127,8 +129,15 @@ export async function registerAnonymousIdentity(): Promise<void> {
 }
 
 export async function resetAnonymousIdentity(): Promise<void> {
-  setAnonymousId(crypto.randomUUID());
-  await registerAnonymousIdentity();
+  const anonId = crypto.randomUUID();
+  setAnonymousId(anonId);
+  const response = await apiFetch<{ ok: boolean; user_id: string }>('/identity/anonymous', {
+    method: 'POST',
+    body: JSON.stringify({ id: anonId, timezone: getTimeZone() }),
+  });
+  if (response?.user_id && response.user_id !== anonId) {
+    setAnonymousId(response.user_id);
+  }
 }
 
 export async function fetchMe(): Promise<{

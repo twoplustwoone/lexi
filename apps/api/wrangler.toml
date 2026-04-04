@@ -9,7 +9,9 @@ CORS_ALLOW_ORIGIN = "http://localhost:5173"
 SESSION_TTL_DAYS = "30"
 SESSION_COOKIE_SAMESITE = "Lax"
 COOKIE_SECURE = "false"
+ANON_TTL_DAYS = "30"
 VAPID_SUBJECT = "mailto:hello@example.com"
+PUSH_ENDPOINT_ALLOWLIST = ""
 
 [triggers]
 crons = ["*/30 * * * *"]
@@ -36,8 +38,10 @@ CORS_ALLOW_ORIGIN = "https://lexi.twoplustwoone.dev"
 SESSION_TTL_DAYS = "30"
 SESSION_COOKIE_SAMESITE = "Lax"
 COOKIE_SECURE = "true"
+ANON_TTL_DAYS = "30"
 VAPID_SUBJECT = "mailto:francisco@twoplustwoone.dev"
 NOTIFICATION_SAME_DAY_DELIVERY = "true"
+PUSH_ENDPOINT_ALLOWLIST = ""
 
 [env.production.triggers]
 crons = ["*/30 * * * *"]

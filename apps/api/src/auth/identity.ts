@@ -2,21 +2,52 @@ import { DEFAULT_PREFERENCES, normalizePreferences, timeZoneSchema } from '@word
 
 import { Env } from '../env';
 import { createAnonymousUser, getUserById } from '../db';
-import { getSessionUserId, parseCookies } from './sessions';
+import { buildAnonCookie, getSessionUserId, parseCookies } from './sessions';
 
-export async function resolveAnonymousId(env: Env, request: Request): Promise<string | null> {
-  const anonId = request.headers.get('x-anon-id');
-  if (!anonId) {
+export interface ResolveAnonOptions {
+  setCookie?: (cookie: string) => void;
+  allowHeader?: boolean;
+}
+
+export async function resolveAnonymousId(
+  env: Env,
+  request: Request,
+  options: ResolveAnonOptions = {}
+): Promise<string | null> {
+  const cookieHeader = request.headers.get('cookie');
+  const cookies = parseCookies(cookieHeader);
+  const cookieAnon = cookies.anon_id ?? null;
+
+  if (cookieAnon) {
+    const record = await getUserById(env, cookieAnon);
+    if (record && record.is_anonymous === 1 && !record.merged_into_user_id) {
+      return cookieAnon;
+    }
+  }
+
+  const allowHeader = options.allowHeader !== false;
+  const headerAnon = allowHeader ? request.headers.get('x-anon-id') : null;
+  if (!headerAnon) {
     return null;
   }
-  const record = await getUserById(env, anonId);
+
+  const record = await getUserById(env, headerAnon);
   if (!record || record.is_anonymous !== 1 || record.merged_into_user_id) {
     return null;
   }
-  return anonId;
+
+  if (options.setCookie && headerAnon !== cookieAnon) {
+    options.setCookie(buildAnonCookie(env, headerAnon));
+  }
+
+  return headerAnon;
 }
 
-export async function resolveUserId(env: Env, request: Request): Promise<string | null> {
+export async function resolveUserId(
+  env: Env,
+  request: Request,
+  options: ResolveAnonOptions = {}
+): Promise<string | null> {
   const cookieHeader = request.headers.get('cookie');
   const cookies = parseCookies(cookieHeader);
   const sessionToken = cookies.session ?? null;
@@ -24,7 +55,7 @@ export async function resolveUserId(env: Env, request: Request): Promise<string 
   if (sessionUserId) {
     return sessionUserId;
   }
-  return resolveAnonymousId(env, request);
+  return resolveAnonymousId(env, request, options);
 }
 
 export async function ensureAnonymousUserExists(
@@ -42,8 +73,12 @@ export async function ensureAnonymousUserExists(
   }
 }
 
-export async function getUserOrThrow(env: Env, request: Request): Promise<string> {
-  const userId = await resolveUserId(env, request);
+export async function getUserOrThrow(
+  env: Env,
+  request: Request,
+  options: ResolveAnonOptions = {}
+): Promise<string> {
+  const userId = await resolveUserId(env, request, options);
   if (!userId) {
     throw new Error('Unauthorized');
   }
