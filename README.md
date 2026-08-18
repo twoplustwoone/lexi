@@ -26,7 +26,7 @@ The app works without accounts by default, supports optional account creation la
 
 ### Setup
 
-1. Install dependencies: `npm run install:all`
+1. Install dependencies: `npm ci` (or `npm run install:all` when you intend to update the lockfile)
 2. Copy environment templates:
    - `cp apps/api/.dev.vars.example apps/api/.dev.vars`
    - `cp apps/web/.env.example apps/web/.env`
@@ -37,6 +37,25 @@ The app works without accounts by default, supports optional account creation la
    - Update `apps/api/wrangler.toml` with the D1 and KV IDs
 6. Apply migrations (includes seeded words): `npm run db:migrate --prefix apps/api`
 7. (Optional) Seed words + admin: `npm run seed:words`
+
+### Dependencies
+
+This is an npm workspaces repo with a single `package-lock.json` at the root — do
+not add per-package lockfiles, which is how resolutions drifted apart before.
+
+CI and deploys install with `npm ci`, so the lockfile decides what gets built and
+an upstream release cannot change it. Use `npm install` only when you mean to move
+the lockfile, and commit the result.
+
+The Cloudflare toolchain (`wrangler`, `@cloudflare/workers-types`, `miniflare`) is
+pinned to exact versions because it has broken this build before. Note that
+`@cloudflare/workers-types` v5 drops the dated type entrypoints, so moving to it
+means changing the `types` entry in `apps/api/tsconfig.json` in the same commit —
+a migration, not a bump.
+
+A weekly **Dependency Drift** workflow resolves every range fresh and runs the full
+suite, so you find out that updating would break something before you need to
+update. It opens an issue when it fails.
 
 ### Word pool and review
 
