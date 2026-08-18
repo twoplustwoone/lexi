@@ -8,7 +8,8 @@
 - Operational scripts live in `scripts/` (for example seeding and word-pool import). Supporting docs are in `docs/`.
 
 ## Build, Test, and Development Commands
-- `npm run install:all` - install root + workspace dependencies.
+- `npm ci` - install exactly what the lockfile pins (what CI and deploys run).
+- `npm run install:all` - resolve and update the lockfile; commit the result.
 - `npm run dev` - start local API and web development servers.
 - `npm run build` - build API (Wrangler dry-run output) and web production bundle.
 - `npm run lint` / `npm run typecheck` / `npm run test` - run checks across all workspaces.
