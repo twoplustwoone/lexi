@@ -12,7 +12,7 @@ function createExecutionContext(): ExecutionContext {
     props: {},
     waitUntil: () => {},
     passThroughOnException: () => {},
-  } as ExecutionContext;
+  } as unknown as ExecutionContext;
 }
 
 function nowIso(): string {

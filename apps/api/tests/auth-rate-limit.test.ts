@@ -16,7 +16,7 @@ function createExecutionContext(): ExecutionContext {
     props: {},
     waitUntil: () => {},
     passThroughOnException: () => {},
-  } as ExecutionContext;
+  } as unknown as ExecutionContext;
 }
 
 describe('auth rate limits', () => {

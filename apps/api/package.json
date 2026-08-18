@@ -22,7 +22,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20240725.0",
+    "@cloudflare/workers-types": "^5.20260815.1",
     "@types/luxon": "^3.7.1",
     "miniflare": "^3.20240725.0",
     "vitest": "^2.0.5",
