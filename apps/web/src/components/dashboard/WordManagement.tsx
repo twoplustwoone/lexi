@@ -151,7 +151,7 @@ function ReviewQueue({
                     checked={selectedIds.includes(item.id)}
                     onChange={() => onToggleSelect(item.id)}
                     aria-label={`Select ${item.word} for bulk review`}
-                    className="h-4 w-4 cursor-pointer accent-[#b56024]"
+                    className="h-4 w-4 cursor-pointer accent-[#2f5d50]"
                   />
                   <p className="text-base font-semibold text-ink">{item.word}</p>
                   <span className="rounded-full bg-surface px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">
