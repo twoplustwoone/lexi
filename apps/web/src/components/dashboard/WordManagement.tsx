@@ -18,7 +18,9 @@ import {
   WordPoolHealth,
   WordReviewQueueItem,
   approveWordPoolReview,
+  autoApproveWordPoolQueue,
   bulkCreateAdminWords,
+  bulkReviewWordPool,
   createAdminWord,
   deleteAdminWord,
   fetchAdminWords,
@@ -98,6 +100,8 @@ function ReviewQueue({
   queue,
   drafts,
   actionId,
+  selectedIds,
+  onToggleSelect,
   onChangeDraft,
   onApprove,
   onReject,
@@ -106,6 +110,8 @@ function ReviewQueue({
   queue: WordReviewQueueItem[];
   drafts: Record<number, ReviewDraftFields>;
   actionId: number | null;
+  selectedIds: number[];
+  onToggleSelect: (id: number) => void;
   onChangeDraft: (id: number, patch: Partial<ReviewDraftFields>) => void;
   onApprove: (item: WordReviewQueueItem) => Promise<void>;
   onReject: (item: WordReviewQueueItem) => Promise<void>;
@@ -140,6 +146,13 @@ function ReviewQueue({
             <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.includes(item.id)}
+                    onChange={() => onToggleSelect(item.id)}
+                    aria-label={`Select ${item.word} for bulk review`}
+                    className="h-4 w-4 cursor-pointer accent-[#2f5d50]"
+                  />
                   <p className="text-base font-semibold text-ink">{item.word}</p>
                   <span className="rounded-full bg-surface px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">
                     {item.difficultyCategory}
@@ -643,6 +656,9 @@ export function WordManagement() {
   const [reviewQueue, setReviewQueue] = useState<WordReviewQueueItem[]>([]);
   const [reviewDrafts, setReviewDrafts] = useState<Record<number, ReviewDraftFields>>({});
   const [reviewActionId, setReviewActionId] = useState<number | null>(null);
+  const [selectedReviewIds, setSelectedReviewIds] = useState<number[]>([]);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkMessage, setBulkMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
@@ -741,6 +757,57 @@ export function WordManagement() {
       await loadWords();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete word');
+    }
+  };
+
+  const handleToggleReviewSelect = (id: number) => {
+    setSelectedReviewIds((current) =>
+      current.includes(id) ? current.filter((value) => value !== id) : [...current, id]
+    );
+  };
+
+  const handleToggleSelectAll = () => {
+    setSelectedReviewIds((current) =>
+      current.length === reviewQueue.length ? [] : reviewQueue.map((item) => item.id)
+    );
+  };
+
+  const handleBulkApprove = async () => {
+    if (selectedReviewIds.length === 0) return;
+    setBulkBusy(true);
+    setError(null);
+    setBulkMessage(null);
+    try {
+      const result = await bulkReviewWordPool({
+        wordPoolIds: selectedReviewIds,
+        action: 'approve',
+        reviewNote: 'Bulk approved from review queue',
+      });
+      setBulkMessage(`Approved ${result.updated} of ${result.requested} selected words.`);
+      setSelectedReviewIds([]);
+      await Promise.all([loadReviewQueue(), loadWords()]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to bulk approve words');
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const handleAutoApproveSweep = async () => {
+    setBulkBusy(true);
+    setError(null);
+    setBulkMessage(null);
+    try {
+      const result = await autoApproveWordPoolQueue();
+      setBulkMessage(
+        `Scanned ${result.scanned} words: approved ${result.approved}, flagged ${result.flagged} for manual review.`
+      );
+      setSelectedReviewIds([]);
+      await Promise.all([loadReviewQueue(), loadWords()]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to run auto-approve sweep');
+    } finally {
+      setBulkBusy(false);
     }
   };
 
@@ -914,7 +981,8 @@ export function WordManagement() {
           <div>
             <p className="text-sm font-semibold text-ink">Pending Review</p>
             <p className="text-xs text-muted">
-              New and re-enriched words must be approved here before they can be served.
+              Enriched words that pass the quality gate are approved automatically. These were
+              flagged and need a decision before they can be served.
             </p>
           </div>
           <span className="text-xs font-medium text-muted">
@@ -922,10 +990,37 @@ export function WordManagement() {
           </span>
         </div>
 
+        <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-[rgba(30,27,22,0.08)] pb-3">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={handleToggleSelectAll}
+            disabled={bulkBusy || reviewQueue.length === 0}
+          >
+            {selectedReviewIds.length === reviewQueue.length && reviewQueue.length > 0
+              ? 'Clear selection'
+              : 'Select all'}
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={handleBulkApprove}
+            disabled={bulkBusy || selectedReviewIds.length === 0}
+          >
+            {bulkBusy ? 'Working...' : `Approve selected (${selectedReviewIds.length})`}
+          </Button>
+          <Button variant="ghost" size="sm" onClick={handleAutoApproveSweep} disabled={bulkBusy}>
+            Run auto-approve sweep
+          </Button>
+          {bulkMessage ? <span className="text-xs text-muted">{bulkMessage}</span> : null}
+        </div>
+
         <ReviewQueue
           queue={reviewQueue}
           drafts={reviewDrafts}
           actionId={reviewActionId}
+          selectedIds={selectedReviewIds}
+          onToggleSelect={handleToggleReviewSelect}
           onChangeDraft={handleReviewDraftChange}
           onApprove={handleApproveReview}
           onReject={handleRejectReview}

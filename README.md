@@ -38,6 +38,31 @@ The app works without accounts by default, supports optional account creation la
 6. Apply migrations (includes seeded words): `npm run db:migrate --prefix apps/api`
 7. (Optional) Seed words + admin: `npm run seed:words`
 
+### Word pool and review
+
+Words flow through the pool in three steps:
+
+1. **Import** raw words (`scripts/import-scowl.mjs`, `scripts/import-advanced-corpus.mjs`),
+   which also queues each new word for enrichment.
+2. **Enrich** them from Merriam-Webster (falling back to dictionaryapi.dev) on the
+   `*/30` cron, up to 10 words per run.
+3. **Approve** them. Only words that are both `ready` and `approved` are ever served.
+
+Approval is automatic by default. Each enriched word is checked by a quality gate
+(`apps/api/src/words/quality.ts`) that rejects empty payloads, stub definitions, and
+entries that only cross-reference another word form ("past tense of ...", "plural of ...").
+Words that pass are approved without human involvement; words that fail stay in the
+review queue with a note explaining why.
+
+The same gate runs on the cron against any backlog, so words enriched before
+auto-approval existed drain on their own. Admins can also:
+
+- select words in the review queue and approve them in bulk, or
+- press **Run auto-approve sweep** to process the backlog on demand.
+
+Set `ENRICHMENT_AUTO_APPROVE = "false"` in `wrangler.toml` to send every enriched
+word through the manual queue instead.
+
 ### Run
 
 `npm run dev`

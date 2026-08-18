@@ -134,6 +134,13 @@ function NavLinks() {
       >
         History
       </Link>
+      <Link
+        activeClassName="nav-active bg-white text-accent-strong shadow-[0_3px_8px_rgba(29,25,18,0.12)] md:bg-transparent md:shadow-none"
+        className="relative z-10 flex-1 rounded-full px-3 py-1.5 text-center text-sm font-semibold text-muted no-underline transition-colors hover:text-accent-strong md:flex-initial md:px-4 md:py-1.5 md:text-sm"
+        href="/settings"
+      >
+        Settings
+      </Link>
     </nav>
   );
 }
@@ -237,14 +244,6 @@ function AvatarMenu({
               Admin
             </Link>
           ) : null}
-          <Link
-            href="/settings"
-            className={menuItemClassName}
-            role="menuitem"
-            onClick={() => setOpen(false)}
-          >
-            Settings
-          </Link>
           <button
             type="button"
             className={menuItemClassName}

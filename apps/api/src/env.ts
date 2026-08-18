@@ -17,4 +17,5 @@ export interface Env {
   RESEND_FROM: string;
   PUSH_ENDPOINT_ALLOWLIST?: string;
   MERRIAM_WEBSTER_API_KEY?: string;
+  ENRICHMENT_AUTO_APPROVE?: string;
 }

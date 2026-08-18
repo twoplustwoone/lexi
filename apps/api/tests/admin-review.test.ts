@@ -275,3 +275,186 @@ describe('admin word review routes', () => {
     }
   });
 });
+
+describe('admin bulk review routes', () => {
+  async function seedPendingWord(env: Env, id: number, word: string, definition: string) {
+    const createdAt = nowIso();
+    await env.DB.prepare(
+      `INSERT INTO word_pool
+         (id, word, enabled, tier, difficulty_category, source, created_at)
+       VALUES (?, ?, 1, 50, 'balanced', 'test', ?)`
+    )
+      .bind(id, word, createdAt)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO word_details
+         (word_pool_id, status, review_status, provider, normalized_json, fetched_at)
+       VALUES (?, 'ready', 'pending_review', 'stub', ?, ?)`
+    )
+      .bind(
+        id,
+        JSON.stringify({
+          word,
+          phonetics: null,
+          audioUrl: null,
+          meanings: [
+            {
+              partOfSpeech: 'noun',
+              definitions: [definition],
+              examples: [],
+              synonyms: [],
+              antonyms: [],
+            },
+          ],
+          etymology: null,
+        }),
+        createdAt
+      )
+      .run();
+  }
+
+  it('approves a batch of words in one request', async () => {
+    const { env, cleanup } = await createTestEnv();
+
+    try {
+      const cookie = await seedAdminSession(env);
+      await seedPendingWord(env, 34001, 'lambent', 'Glowing with soft radiance.');
+      await seedPendingWord(env, 34002, 'obdurate', 'Stubbornly refusing to change.');
+
+      const response = await worker.fetch(
+        new Request('http://localhost/api/admin/word-pool/review/bulk', {
+          method: 'POST',
+          headers: { cookie, 'content-type': 'application/json' },
+          body: JSON.stringify({ wordPoolIds: [34001, 34002], action: 'approve' }),
+        }),
+        env,
+        createExecutionContext()
+      );
+
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as { updated: number; requested: number };
+      expect(body.updated).toBe(2);
+      expect(body.requested).toBe(2);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('requires a review note when bulk rejecting', async () => {
+    const { env, cleanup } = await createTestEnv();
+
+    try {
+      const cookie = await seedAdminSession(env);
+      await seedPendingWord(env, 34003, 'nonce', 'An unsuitable term.');
+
+      const response = await worker.fetch(
+        new Request('http://localhost/api/admin/word-pool/review/bulk', {
+          method: 'POST',
+          headers: { cookie, 'content-type': 'application/json' },
+          body: JSON.stringify({ wordPoolIds: [34003], action: 'reject' }),
+        }),
+        env,
+        createExecutionContext()
+      );
+
+      expect(response.status).toBe(400);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('rejects an over-sized batch', async () => {
+    const { env, cleanup } = await createTestEnv();
+
+    try {
+      const cookie = await seedAdminSession(env);
+      const tooMany = Array.from({ length: 501 }, (_, index) => index + 1);
+
+      const response = await worker.fetch(
+        new Request('http://localhost/api/admin/word-pool/review/bulk', {
+          method: 'POST',
+          headers: { cookie, 'content-type': 'application/json' },
+          body: JSON.stringify({ wordPoolIds: tooMany, action: 'approve' }),
+        }),
+        env,
+        createExecutionContext()
+      );
+
+      expect(response.status).toBe(400);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('refuses bulk review without an admin session', async () => {
+    const { env, cleanup } = await createTestEnv();
+
+    try {
+      const response = await worker.fetch(
+        new Request('http://localhost/api/admin/word-pool/review/bulk', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ wordPoolIds: [1], action: 'approve' }),
+        }),
+        env,
+        createExecutionContext()
+      );
+
+      expect(response.status).toBe(401);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('runs an auto-approve sweep on demand', async () => {
+    const { env, cleanup } = await createTestEnv();
+
+    try {
+      const cookie = await seedAdminSession(env);
+      await seedPendingWord(env, 34004, 'halcyon', 'Denoting a period of idyllic calm.');
+      await seedPendingWord(env, 34005, 'mice', 'plural of mouse');
+
+      const response = await worker.fetch(
+        new Request('http://localhost/api/admin/word-pool/review/auto-approve', {
+          method: 'POST',
+          headers: { cookie, 'content-type': 'application/json' },
+          body: JSON.stringify({}),
+        }),
+        env,
+        createExecutionContext()
+      );
+
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        scanned: number;
+        approved: number;
+        flagged: number;
+      };
+      expect(body.approved).toBeGreaterThanOrEqual(1);
+      expect(body.flagged).toBeGreaterThanOrEqual(1);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('refuses an auto-approve sweep without an admin session', async () => {
+    const { env, cleanup } = await createTestEnv();
+
+    try {
+      const response = await worker.fetch(
+        new Request('http://localhost/api/admin/word-pool/review/auto-approve', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({}),
+        }),
+        env,
+        createExecutionContext()
+      );
+
+      expect(response.status).toBe(401);
+    } finally {
+      await cleanup();
+    }
+  });
+});

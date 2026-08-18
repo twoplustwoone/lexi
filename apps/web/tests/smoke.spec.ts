@@ -154,9 +154,9 @@ async function mockApi(page: Page, overrides: ApiOverrides = {}) {
 test("renders the home view with today's word", async ({ page }) => {
   await mockApi(page);
   await page.goto('/');
-  await expect(page.getByText('Lexi')).toBeVisible();
+  await expect(page.getByText('Lexi', { exact: true })).toBeVisible();
   await expect(page.getByText("Today's word")).toBeVisible();
-  await expect(page.getByText(defaultTodayWord.word)).toBeVisible();
+  await expect(page.getByRole('heading', { name: defaultTodayWord.word })).toBeVisible();
   await expect(page.getByText(defaultTodayWord.details.meanings[0].definitions[0])).toBeVisible();
 });
 
@@ -226,4 +226,34 @@ test('shows admin actions when authenticated as admin', async ({ page }) => {
   const requestPromise = page.waitForRequest((req) => req.url().endsWith('/api/admin/notify'));
   await page.getByRole('button', { name: 'Send now' }).click();
   await requestPromise;
+});
+
+test('anonymous users can reach settings from the main nav', async ({ page }) => {
+  await mockApi(page, {
+    me: {
+      user_id: 'anon-user',
+      is_authenticated: false,
+      is_anonymous: true,
+      is_admin: false,
+    },
+  });
+  await page.goto('/');
+
+  // The nav must expose Settings without an account: notification delivery is
+  // the whole product, and anonymous use is a supported mode.
+  const settingsLink = page.getByRole('link', { name: 'Settings' });
+  await expect(settingsLink).toBeVisible();
+
+  await settingsLink.click();
+  await expect(page.getByLabel('Delivery time')).toBeVisible();
+});
+
+test('the home reminder banner links to settings', async ({ page }) => {
+  await mockApi(page);
+  await page.goto('/');
+
+  const bannerLink = page.getByRole('link', { name: 'Open settings' });
+  await expect(bannerLink).toBeVisible();
+  await bannerLink.click();
+  await expect(page.getByLabel('Delivery time')).toBeVisible();
 });
