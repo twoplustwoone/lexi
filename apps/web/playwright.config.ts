@@ -9,5 +9,8 @@ export default defineConfig({
   },
   use: {
     baseURL: 'http://127.0.0.1:4173',
+    // The app's service worker uses cache-first on same-origin GETs and reloads
+    // the page on controllerchange, which makes navigation nondeterministic here.
+    serviceWorkers: 'block',
   },
 });

@@ -71,6 +71,11 @@ import {
   listWordReviewQueue,
   approveWordReview,
   rejectWordReview,
+  bulkApproveWordReviews,
+  bulkRejectWordReviews,
+  autoApproveReviewQueue,
+  isAutoApproveEnabled,
+  MAX_BULK_REVIEW_IDS,
   importWords,
   getEnrichmentStats,
   getWordPoolHealth,
@@ -2361,6 +2366,73 @@ app.post('/api/admin/word/:id/reject', async (c) => {
   return c.json({ ok: true, reviewStatus: 'rejected', enabled: false });
 });
 
+app.post('/api/admin/word-pool/review/bulk', async (c) => {
+  const cookies = parseCookies(c.req.header('cookie') ?? null);
+  const token = cookies.session ?? null;
+  const userId = await getSessionUserId(c.env, token);
+  if (!userId) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const user = await getUserById(c.env, userId);
+  if (!user || user.is_admin !== 1) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+
+  const body = await c.req.json().catch(() => ({}));
+  const parsed = z
+    .object({
+      wordPoolIds: z.array(z.number().int().positive()).min(1).max(MAX_BULK_REVIEW_IDS),
+      action: z.enum(['approve', 'reject']),
+      reviewNote: z.string().max(500).optional(),
+    })
+    .safeParse(body);
+
+  if (!parsed.success) {
+    return c.json({ error: 'Invalid bulk review request' }, 400);
+  }
+
+  const { wordPoolIds, action, reviewNote } = parsed.data;
+  const uniqueIds = [...new Set(wordPoolIds)];
+
+  if (action === 'reject') {
+    if (!reviewNote || reviewNote.trim().length === 0) {
+      return c.json({ error: 'reviewNote is required when rejecting' }, 400);
+    }
+    const result = await bulkRejectWordReviews(c.env, uniqueIds, userId, reviewNote);
+    return c.json({ ok: true, reviewStatus: 'rejected', ...result });
+  }
+
+  const result = await bulkApproveWordReviews(c.env, uniqueIds, userId, reviewNote);
+  return c.json({ ok: true, reviewStatus: 'approved', ...result });
+});
+
+app.post('/api/admin/word-pool/review/auto-approve', async (c) => {
+  const cookies = parseCookies(c.req.header('cookie') ?? null);
+  const token = cookies.session ?? null;
+  const userId = await getSessionUserId(c.env, token);
+  if (!userId) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const user = await getUserById(c.env, userId);
+  if (!user || user.is_admin !== 1) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+
+  const body = await c.req.json().catch(() => ({}));
+  const parsed = z
+    .object({
+      limit: z.number().int().positive().max(1000).optional(),
+    })
+    .safeParse(body);
+
+  if (!parsed.success) {
+    return c.json({ error: 'Invalid auto-approve request' }, 400);
+  }
+
+  const result = await autoApproveReviewQueue(c.env, parsed.data.limit);
+  return c.json({ ok: true, ...result });
+});
+
 app.get('/api/admin/enrichment/stats', async (c) => {
   const cookies = parseCookies(c.req.header('cookie') ?? null);
   const token = cookies.session ?? null;
@@ -2407,6 +2479,12 @@ export default {
 
     // Process word enrichment queue
     ctx.waitUntil(processEnrichmentQueue(env));
+
+    // Drain the review backlog: words enriched before auto-approval existed are
+    // stranded at pending_review and would otherwise never be served.
+    if (isAutoApproveEnabled(env.ENRICHMENT_AUTO_APPROVE)) {
+      ctx.waitUntil(autoApproveReviewQueue(env));
+    }
   },
 };
 

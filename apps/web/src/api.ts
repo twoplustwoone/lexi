@@ -607,3 +607,23 @@ export async function rejectWordPoolReview(
 export async function retryWordPoolReview(id: number): Promise<{ ok: boolean }> {
   return apiFetch(`/admin/word/${id}/retry`, { method: 'POST' });
 }
+
+export async function bulkReviewWordPool(payload: {
+  wordPoolIds: number[];
+  action: 'approve' | 'reject';
+  reviewNote?: string;
+}): Promise<{ ok: boolean; reviewStatus: WordReviewStatus; updated: number; requested: number }> {
+  return apiFetch('/admin/word-pool/review/bulk', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function autoApproveWordPoolQueue(
+  limit?: number
+): Promise<{ ok: boolean; scanned: number; approved: number; flagged: number }> {
+  return apiFetch('/admin/word-pool/review/auto-approve', {
+    method: 'POST',
+    body: JSON.stringify(limit ? { limit } : {}),
+  });
+}

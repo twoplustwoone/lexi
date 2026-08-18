@@ -261,8 +261,14 @@ export function Home({ user, onOpenAuth }: HomeProps) {
   return (
     <section className="grid gap-5">
       {reminder ? (
-        <div className="rounded-2xl border border-dashed border-[rgba(30,27,22,0.2)] bg-banner px-4 py-3">
-          {reminder}
+        <div className="flex flex-col gap-2 rounded-2xl border border-dashed border-[rgba(30,27,22,0.2)] bg-banner px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <span>{reminder}</span>
+          <a
+            href="/settings"
+            className="shrink-0 text-sm font-semibold text-accent-strong underline underline-offset-2"
+          >
+            Open settings
+          </a>
         </div>
       ) : null}
       {fallbackNotice ? (

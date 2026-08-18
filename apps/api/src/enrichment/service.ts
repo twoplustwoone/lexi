@@ -4,6 +4,7 @@ import type { Env } from '../env';
 import type { EnrichmentProvider, EnrichmentResult } from './provider';
 import { DictionaryApiProvider } from './dictionaryapi';
 import { MerriamWebsterProvider } from './merriamWebster';
+import { evaluateWordCardQuality, isAutoApproveEnabled } from '../words/quality';
 
 /**
  * Calculate backoff delay for retry
@@ -167,6 +168,12 @@ export class EnrichmentService {
     now: string,
     providerName: string
   ): Promise<void> {
+    const verdict = isAutoApproveEnabled(env.ENRICHMENT_AUTO_APPROVE)
+      ? evaluateWordCardQuality(result.normalized ?? null)
+      : { autoApprove: false, reason: 'Auto-approval disabled' };
+
+    const reviewStatus: WordReviewStatus = verdict.autoApprove ? 'approved' : 'pending_review';
+
     await env.DB.prepare(
       `UPDATE word_details
        SET status = 'ready',
@@ -176,10 +183,10 @@ export class EnrichmentService {
            fetched_at = ?,
            next_retry_at = NULL,
            error = NULL,
-           review_status = 'pending_review',
-           reviewed_at = NULL,
-           reviewed_by = NULL,
-           review_note = NULL
+           review_status = ?,
+           reviewed_at = ?,
+           reviewed_by = ?,
+           review_note = ?
        WHERE word_pool_id = ?`
     )
       .bind(
@@ -187,6 +194,10 @@ export class EnrichmentService {
         JSON.stringify(result.rawPayload),
         JSON.stringify(result.normalized),
         now,
+        reviewStatus,
+        verdict.autoApprove ? now : null,
+        verdict.autoApprove ? 'auto' : null,
+        verdict.autoApprove ? `Auto-approved from ${providerName}` : verdict.reason,
         wordPoolId
       )
       .run();
