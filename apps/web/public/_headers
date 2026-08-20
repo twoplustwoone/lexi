@@ -1,0 +1,23 @@
+# Cloudflare Pages cache rules.
+#
+# The rule of thumb: a URL that carries a content hash may be cached forever,
+# and a URL that stays the same across deploys must revalidate. Getting this
+# wrong is why a changed icon kept rendering as the old one — the file was
+# replaced but its URL was not, so caches had no reason to refetch it.
+
+# Vite emits content-hashed filenames here, so the bytes behind a given URL
+# never change.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Stable URLs. Cheap to revalidate and it keeps a redeploy honest.
+/icons/*
+  Cache-Control: public, max-age=0, must-revalidate
+
+/manifest.webmanifest
+  Cache-Control: public, max-age=0, must-revalidate
+
+# The worker script decides when every other cache is allowed to update, so it
+# must never itself be served from cache.
+/sw.js
+  Cache-Control: no-cache

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Rasterise the app icons from their SVG sources.
+ * Build the app icons from their SVG sources.
  *
  * Usage:
  *   npm i --no-save sharp
@@ -10,6 +10,11 @@
  * sharp is not a project dependency — icons change about once a year, and it
  * ships platform-specific binaries that would slow every install down for
  * everyone. Install it ad hoc when you actually need to regenerate.
+ *
+ * Sources live in apps/web/src/icons so that Vite processes the mark when the
+ * app imports it: the header logo ends up inlined in the content-hashed bundle
+ * rather than fetched from a stable URL, which is what let a stale icon survive
+ * a deploy. Everything written to apps/web/public/icons is generated from them.
  *
  * Two sources, because the platforms want different art:
  *
@@ -24,21 +29,24 @@
  * the old icon were cropped away on Android home screens.
  */
 
+import { copyFile, mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
-const ICONS_DIR = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  '../apps/web/public/icons'
-);
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const SRC_DIR = path.join(ROOT, 'apps/web/src/icons');
+const OUT_DIR = path.join(ROOT, 'apps/web/public/icons');
 
 /** [source svg, output png, pixel size] */
-const TARGETS = [
+const RASTER_TARGETS = [
   ['icon.svg', 'icon-192.png', 192],
   ['icon.svg', 'icon-512.png', 512],
   ['icon-maskable.svg', 'icon-maskable-512.png', 512],
   ['icon-maskable.svg', 'apple-touch-icon.png', 180],
 ];
+
+/** Copied verbatim because the manifest and the favicon link reference them. */
+const COPY_TARGETS = ['icon.svg'];
 
 async function main() {
   let sharp;
@@ -49,12 +57,19 @@ async function main() {
     process.exit(1);
   }
 
-  for (const [src, out, size] of TARGETS) {
-    await sharp(path.join(ICONS_DIR, src))
+  await mkdir(OUT_DIR, { recursive: true });
+
+  for (const [src, out, size] of RASTER_TARGETS) {
+    await sharp(path.join(SRC_DIR, src))
       .resize(size, size)
       .png({ compressionLevel: 9 })
-      .toFile(path.join(ICONS_DIR, out));
+      .toFile(path.join(OUT_DIR, out));
     console.log(`${out.padEnd(24)} ${size}x${size}  <- ${src}`);
+  }
+
+  for (const name of COPY_TARGETS) {
+    await copyFile(path.join(SRC_DIR, name), path.join(OUT_DIR, name));
+    console.log(`${name.padEnd(24)} copied    <- ${name}`);
   }
 }
 

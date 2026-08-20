@@ -1,21 +1,20 @@
 const CACHE_VERSION = new URL(self.location.href).searchParams.get('v') || 'v2';
 const CACHE_NAME = `wotd-shell-${CACHE_VERSION}`;
-const APP_SHELL = [
-  '/',
-  '/index.html',
-  '/manifest.webmanifest',
-  '/icons/icon-192.png',
-  '/icons/icon-512.png',
-  '/icons/apple-touch-icon.png',
-];
+const APP_SHELL = ['/', '/index.html', '/manifest.webmanifest'];
+
+// Vite emits content-hashed filenames under /assets/, so those bytes can never
+// change under a given URL and are safe to serve from cache forever. Everything
+// else same-origin keeps a stable URL across deploys, so it has to revalidate
+// or it goes stale until the cache is version-bumped.
+const IMMUTABLE_PATH = '/assets/';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(APP_SHELL);
-    })
+    caches
+      .open(CACHE_NAME)
+      .then((cache) => cache.addAll(APP_SHELL))
+      .then(() => self.skipWaiting())
   );
-  self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {
@@ -47,7 +46,11 @@ self.addEventListener('fetch', (event) => {
   }
 
   if (url.origin === self.location.origin) {
-    event.respondWith(cacheFirst(request));
+    event.respondWith(
+      url.pathname.startsWith(IMMUTABLE_PATH)
+        ? cacheFirst(request)
+        : staleWhileRevalidate(request)
+    );
   }
 });
 
@@ -105,6 +108,25 @@ self.addEventListener('sync', (event) => {
     event.waitUntil(flushOutbox());
   }
 });
+
+/**
+ * Serve from cache for speed, but always refresh in the background, so a file
+ * whose URL never changes (icons, the manifest) is at most one load stale
+ * instead of stale until the cache name changes.
+ */
+async function staleWhileRevalidate(request) {
+  const cache = await caches.open(CACHE_NAME);
+  const cached = await cache.match(request);
+  const network = fetch(request)
+    .then((response) => {
+      if (response.ok) {
+        cache.put(request, response.clone());
+      }
+      return response;
+    })
+    .catch(() => cached);
+  return cached || network;
+}
 
 async function cacheFirst(request) {
   const cache = await caches.open(CACHE_NAME);

@@ -10,6 +10,7 @@ import {
   resetAnonymousIdentity,
   trackEvent,
 } from './api';
+import appIcon from './icons/icon.svg';
 import { getAnonymousId } from './identity';
 import { AuthSheet } from './components/AuthSheet';
 import { Button } from './components/Button';
@@ -357,7 +358,7 @@ export function App() {
         <div className="flex items-center justify-between gap-4 md:justify-start">
           <div className="flex items-center gap-4">
             <img
-              src="/icons/icon-192.png"
+              src={appIcon}
               alt="Lexi"
               className="h-14 w-14 rounded-[18px] shadow-[0_18px_40px_rgba(29,25,18,0.12)]"
             />
