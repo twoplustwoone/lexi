@@ -67,6 +67,37 @@ const defaultMe = {
   is_admin: false,
 };
 
+const defaultAdminStats = {
+  users: {
+    total: 42,
+    anonymous: 30,
+    authenticated: 12,
+    admins: 1,
+    byAuthMethod: { password: 7, google: 4, emailCode: 1 },
+  },
+  engagement: { totalWordsDelivered: 120, totalWordsViewed: 96, viewRate: 0.8 },
+  notifications: { enabledCount: 9, disabledCount: 3, pushSubscriptions: 11 },
+};
+
+const defaultAdminTimeline = {
+  userGrowth: [{ date: '2024-01-01', total: 40, authenticated: 11 }],
+  wordsDelivered: [{ date: '2024-01-01', delivered: 12, viewed: 9 }],
+  accountCreations: [{ date: '2024-01-01', password: 1, google: 1, emailCode: 0 }],
+};
+
+const defaultAdminActivity = {
+  eventCounts: { word_viewed: 96, history_opened: 14 },
+  clientBreakdown: { web: 20, pwa: 22 },
+  recentEvents: [
+    {
+      event_name: 'word_viewed',
+      timestamp: '2024-01-02T09:05:00.000Z',
+      user_id: 'user-123',
+      client: 'pwa',
+    },
+  ],
+};
+
 type ApiOverrides = {
   me?: Partial<typeof defaultMe>;
   settings?: typeof defaultSettings;
@@ -127,6 +158,21 @@ async function mockApi(page: Page, overrides: ApiOverrides = {}) {
 
     if (pathname === '/api/events') {
       await route.fulfill({ json: { ok: true } });
+      return;
+    }
+
+    if (pathname === '/api/admin/stats') {
+      await route.fulfill({ json: defaultAdminStats });
+      return;
+    }
+
+    if (pathname === '/api/admin/stats/timeline') {
+      await route.fulfill({ json: defaultAdminTimeline });
+      return;
+    }
+
+    if (pathname === '/api/admin/stats/activity') {
+      await route.fulfill({ json: defaultAdminActivity });
       return;
     }
 
@@ -193,7 +239,7 @@ test('saves updated delivery time in settings', async ({ page }) => {
   await expect(page.getByText('Saved. Changes apply next day.')).toBeVisible();
 });
 
-test('shows sign-in options when signed out', async ({ page }) => {
+test('redirects non-admins away from the admin route', async ({ page }) => {
   await mockApi(page, {
     me: {
       user_id: 'anon-user',
@@ -203,8 +249,12 @@ test('shows sign-in options when signed out', async ({ page }) => {
     },
   });
   await page.goto('/admin');
-  await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Email + Password' })).toBeVisible();
+
+  // The admin screen no longer hosts its own sign-in form — signing in happens
+  // through the auth sheet, and anyone without the admin flag is sent back to
+  // the daily word rather than shown a page they cannot use.
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByText("Today's word")).toBeVisible();
 });
 
 test('shows admin actions when authenticated as admin', async ({ page }) => {
@@ -219,10 +269,13 @@ test('shows admin actions when authenticated as admin', async ({ page }) => {
   await page.goto('/admin');
   await expect(page.getByText('Signed in as admin-user')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Send now' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Sign in' })).toHaveCount(0);
 
-  await page.getByLabel('Title').fill('Test notification');
+  // Sending a push lives behind the Notifications tab; the screen opens on the
+  // dashboard.
+  await page.getByRole('button', { name: 'Notifications' }).click();
+  await expect(page.getByRole('button', { name: 'Send now' })).toBeVisible();
+
+  await page.getByRole('textbox', { name: 'Title' }).fill('Test notification');
   const requestPromise = page.waitForRequest((req) => req.url().endsWith('/api/admin/notify'));
   await page.getByRole('button', { name: 'Send now' }).click();
   await requestPromise;
