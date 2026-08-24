@@ -1,23 +1,14 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
-import PreactRouter, { getCurrentUrl, route, useRouter } from 'preact-router';
-import { Link } from 'preact-router/match';
+import { useEffect, useState } from 'preact/hooks';
+import PreactRouter, { getCurrentUrl, route } from 'preact-router';
 
-import {
-  fetchMe,
-  getClientType,
-  logout,
-  registerAnonymousIdentity,
-  resetAnonymousIdentity,
-  trackEvent,
-} from './api';
-import appIcon from './icons/icon.svg';
+import { fetchMe, getClientType, registerAnonymousIdentity, trackEvent } from './api';
 import { getAnonymousId } from './identity';
 import { AuthSheet } from './components/AuthSheet';
-import { Button } from './components/Button';
-import { Loader } from './components/Loader';
-import { Home } from './screens/Home';
-import { History } from './screens/History';
-import { Settings } from './screens/Settings';
+import { TabBar } from './components/reader/TabBar';
+import { Words } from './screens/Words';
+import { Search } from './screens/Search';
+import { WordDetail } from './screens/WordDetail';
+import { You } from './screens/You';
 import { Admin } from './screens/Admin';
 
 interface UserState {
@@ -25,125 +16,6 @@ interface UserState {
   isAuthenticated: boolean;
   isAnonymous: boolean;
   isAdmin: boolean;
-}
-
-function NavLinks() {
-  const [router] = useRouter();
-  const navRef = useRef<HTMLElement | null>(null);
-  const indicatorRef = useRef<HTMLSpanElement | null>(null);
-  const [indicatorReady, setIndicatorReady] = useState(false);
-  const [indicatorAnimated, setIndicatorAnimated] = useState(false);
-  const indicatorReadyRef = useRef(false);
-  const fontsReadyRef = useRef(false);
-
-  const markReady = () => {
-    if (indicatorReadyRef.current) {
-      return;
-    }
-    if (!fontsReadyRef.current) {
-      return;
-    }
-    indicatorReadyRef.current = true;
-    setIndicatorReady(true);
-    requestAnimationFrame(() => setIndicatorAnimated(true));
-  };
-
-  const updateIndicator = () => {
-    const nav = navRef.current;
-    const indicator = indicatorRef.current;
-    if (!nav || !indicator) {
-      return false;
-    }
-    const active = nav.querySelector<HTMLElement>('.nav-active');
-    if (!active) {
-      return false;
-    }
-    const left = active.offsetLeft;
-    const top = active.offsetTop;
-
-    indicator.style.width = `${active.offsetWidth}px`;
-    indicator.style.height = `${active.offsetHeight}px`;
-    indicator.style.transform = `translate3d(${left}px, ${top}px, 0)`;
-    return true;
-  };
-
-  const queueUpdate = () => {
-    requestAnimationFrame(() => {
-      if (updateIndicator()) {
-        markReady();
-      }
-    });
-  };
-
-  useLayoutEffect(() => {
-    if (updateIndicator()) {
-      markReady();
-    }
-  }, [router?.url]);
-
-  useEffect(() => {
-    const handleResize = () => queueUpdate();
-    window.addEventListener('resize', handleResize);
-    const finish = () => {
-      fontsReadyRef.current = true;
-      queueUpdate();
-    };
-    if ('fonts' in document && document.fonts?.ready) {
-      if (document.fonts.status === 'loaded') {
-        finish();
-      } else {
-        document.fonts.ready.then(finish).catch(finish);
-      }
-    } else {
-      finish();
-    }
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
-
-  useEffect(() => {
-    const nav = navRef.current;
-    if (!nav || typeof ResizeObserver === 'undefined') {
-      return;
-    }
-    const observer = new ResizeObserver(() => queueUpdate());
-    observer.observe(nav);
-    return () => observer.disconnect();
-  }, []);
-
-  return (
-    <nav
-      ref={navRef}
-      className="relative flex w-full max-w-md items-center gap-1 rounded-full border border-[rgba(30,27,22,0.08)] bg-white/60 p-1 shadow-[0_4px_10px_rgba(29,25,18,0.06)] md:w-auto md:max-w-none md:flex-wrap md:gap-3 md:border md:border-[rgba(30,27,22,0.08)] md:bg-white/80 md:px-4 md:py-2 md:shadow-[0_12px_24px_rgba(29,25,18,0.1)]"
-    >
-      <span
-        ref={indicatorRef}
-        className={`pointer-events-none absolute left-0 top-0 z-0 hidden rounded-full bg-white shadow-[0_6px_12px_rgba(29,25,18,0.12)] md:block ${
-          indicatorAnimated ? 'transition-[transform,width,height] duration-200 ease-out' : ''
-        } ${indicatorReady ? 'opacity-100' : 'opacity-0'}`}
-      />
-      <Link
-        activeClassName="nav-active bg-white text-sage-strong shadow-[0_3px_8px_rgba(29,25,18,0.12)] md:bg-transparent md:shadow-none"
-        className="relative z-10 flex-1 rounded-full px-3 py-1.5 text-center text-sm font-semibold text-muted no-underline transition-colors hover:text-sage-strong md:flex-initial md:px-4 md:py-1.5 md:text-sm"
-        href="/"
-      >
-        Home
-      </Link>
-      <Link
-        activeClassName="nav-active bg-white text-sage-strong shadow-[0_3px_8px_rgba(29,25,18,0.12)] md:bg-transparent md:shadow-none"
-        className="relative z-10 flex-1 rounded-full px-3 py-1.5 text-center text-sm font-semibold text-muted no-underline transition-colors hover:text-sage-strong md:flex-initial md:px-4 md:py-1.5 md:text-sm"
-        href="/history"
-      >
-        History
-      </Link>
-      <Link
-        activeClassName="nav-active bg-white text-sage-strong shadow-[0_3px_8px_rgba(29,25,18,0.12)] md:bg-transparent md:shadow-none"
-        className="relative z-10 flex-1 rounded-full px-3 py-1.5 text-center text-sm font-semibold text-muted no-underline transition-colors hover:text-sage-strong md:flex-initial md:px-4 md:py-1.5 md:text-sm"
-        href="/settings"
-      >
-        Settings
-      </Link>
-    </nav>
-  );
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -175,91 +47,6 @@ function AdminRoute({
   }
 
   return <Admin user={user} onOpenAuth={onOpenAuth} onUserChange={onUserChange} />;
-}
-
-function AvatarMenu({
-  user,
-  onSignOut,
-}: {
-  user: UserState;
-  onSignOut: () => void | Promise<void>;
-}) {
-  const [open, setOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    const handleClick = (event: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    };
-    const handleKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClick);
-    document.addEventListener('keydown', handleKey);
-    return () => {
-      document.removeEventListener('mousedown', handleClick);
-      document.removeEventListener('keydown', handleKey);
-    };
-  }, [open]);
-
-  if (!user.isAuthenticated) {
-    return null;
-  }
-
-  const initial = user.userId?.charAt(0)?.toUpperCase() ?? 'L';
-  const menuItemClassName =
-    'flex w-full cursor-pointer items-center px-5 py-3 text-left font-semibold text-ink no-underline transition-colors hover:bg-sand focus-visible:outline focus-visible:outline-2 focus-visible:outline-sage focus-visible:outline-offset-2';
-
-  return (
-    <div ref={menuRef} className="relative">
-      <button
-        type="button"
-        className="flex h-11 w-11 cursor-pointer items-center justify-center rounded-full border border-[rgba(30,27,22,0.12)] bg-white text-sm font-semibold text-sage-strong shadow-[0_8px_18px_rgba(29,25,18,0.12)] transition hover:text-sage-strong/80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sage focus-visible:outline-offset-2"
-        onClick={() => setOpen((prev) => !prev)}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label="Account menu"
-        title={user.userId ?? 'Account'}
-      >
-        {initial}
-      </button>
-      {open ? (
-        <div
-          role="menu"
-          className="absolute right-0 z-50 mt-2 w-52 overflow-hidden rounded-2xl border border-[rgba(30,27,22,0.12)] bg-white text-base shadow-[0_16px_32px_rgba(29,25,18,0.12)]"
-        >
-          {user.isAdmin ? (
-            <Link
-              href="/admin"
-              className={menuItemClassName}
-              role="menuitem"
-              onClick={() => setOpen(false)}
-            >
-              Admin
-            </Link>
-          ) : null}
-          <button
-            type="button"
-            className={menuItemClassName}
-            role="menuitem"
-            onClick={async () => {
-              setOpen(false);
-              await onSignOut();
-            }}
-          >
-            Sign out
-          </button>
-        </div>
-      ) : null}
-    </div>
-  );
 }
 
 export function App() {
@@ -296,37 +83,6 @@ export function App() {
     }
   };
 
-  const handleLogout = async () => {
-    try {
-      await logout();
-    } catch {
-      // Ignore logout failures and try to refresh state.
-    }
-    try {
-      await resetAnonymousIdentity();
-    } catch {
-      // Ignore anonymous re-registration failures.
-    }
-    await refreshUser();
-  };
-
-  const AuthAction = ({ className }: { className?: string }) =>
-    user.isAuthenticated ? (
-      <div className={className}>
-        <AvatarMenu user={user} onSignOut={handleLogout} />
-      </div>
-    ) : (
-      <div className={className}>
-        <Button
-          radius="full"
-          className="shadow-[0_8px_18px_rgba(29,25,18,0.12)]"
-          onClick={openAuth}
-        >
-          Sign in
-        </Button>
-      </div>
-    );
-
   useEffect(() => {
     const init = async () => {
       try {
@@ -354,56 +110,43 @@ export function App() {
     return () => window.removeEventListener('appinstalled', handler);
   }, [user.userId]);
 
-  // Admin is its own surface: it brings its own nav, its own ground and its own
-  // way back to the app, so the reader chrome steps aside for it.
+  // Admin brings its own nav and its own ground, so the reader chrome steps
+  // aside for it entirely.
   const isAdminRoute = path.startsWith('/admin');
+  // Search and word detail are full-screen surfaces of the Words tab.
+  const activeTab: 'words' | 'you' = path.startsWith('/you') ? 'you' : 'words';
+
+  const router = (
+    <PreactRouter onChange={(event) => setPath(event.url)}>
+      <Words path="/" />
+      <Search path="/search" />
+      <WordDetail path="/word/:id" />
+      <You path="/you" user={user} onOpenAuth={openAuth} onUserChange={setUser} />
+      <AdminRoute path="/admin" user={user} onOpenAuth={openAuth} onUserChange={setUser} />
+      <NotFoundRedirect path="/:rest*" />
+    </PreactRouter>
+  );
+
+  // The router must wait for fetchMe: AdminRoute reads user.isAdmin, and on a
+  // first paint that is still false, so rendering early bounces an admin
+  // straight back to the stream.
+  const loading = <p className="px-7 py-8 text-[16px] text-ink/[0.55]">Loading your words.</p>;
+
+  if (isAdminRoute) {
+    return (
+      <>
+        {ready ? router : loading}
+        <AuthSheet open={authOpen} onClose={closeAuth} user={user} onUserChange={setUser} />
+      </>
+    );
+  }
 
   return (
-    <div
-      className={
-        isAdminRoute
-          ? 'min-h-screen text-ink'
-          : 'flex min-h-screen flex-col gap-6 bg-[radial-gradient(circle_at_top,_#fdf7ee_0%,_#f7f0e6_45%,_#f1dfcc_100%)] px-6 pb-16 pt-6 text-ink md:px-12'
-      }
-    >
-      {isAdminRoute ? null : (
-        <header className="flex flex-col gap-4 md:grid md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:items-center">
-          <div className="flex items-center justify-between gap-4 md:justify-start">
-            <div className="flex items-center gap-4">
-              <img
-                src={appIcon}
-                alt="Lexi"
-                className="h-14 w-14 rounded-[18px] shadow-[0_18px_40px_rgba(29,25,18,0.12)]"
-              />
-              <div>
-                <p className="m-0 font-[var(--font-fraunces)] text-2xl">Lexi</p>
-                <p className="mt-1 text-sm text-muted">Daily rituals, kept simple.</p>
-              </div>
-            </div>
-            <AuthAction className="md:hidden" />
-          </div>
-          <div className="flex w-full justify-start md:justify-center">
-            <NavLinks />
-          </div>
-          <AuthAction className="hidden md:flex md:justify-end" />
-        </header>
-      )}
+    <div className="flex h-[100dvh] flex-col bg-bg text-ink">
+      <main className="flex min-h-0 flex-1 flex-col">{ready ? router : loading}</main>
 
-      <main className={isAdminRoute ? '' : 'flex-1'}>
-        {!ready ? (
-          <div className="rounded-[20px] border border-[rgba(30,27,22,0.12)] bg-card p-6 shadow-[0_18px_40px_rgba(29,25,18,0.12)]">
-            <Loader label="Loading your daily word..." />
-          </div>
-        ) : (
-          <PreactRouter onChange={(event) => setPath(event.url)}>
-            <Home path="/" user={user} onOpenAuth={openAuth} />
-            <History path="/history" user={user} />
-            <Settings path="/settings" user={user} />
-            <AdminRoute path="/admin" user={user} onOpenAuth={openAuth} onUserChange={setUser} />
-            <NotFoundRedirect path="/:rest*" />
-          </PreactRouter>
-        )}
-      </main>
+      {/* Two destinations. Search and word detail keep Words active. */}
+      <TabBar active={activeTab} />
 
       <AuthSheet open={authOpen} onClose={closeAuth} user={user} onUserChange={setUser} />
     </div>

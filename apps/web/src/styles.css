@@ -2,14 +2,17 @@
 @source "../index.html";
 @source "./**/*.{ts,tsx}";
 
+/**
+ * Classical — the design system the whole app is built on.
+ *
+ * Three rules do most of the work. Colour is stroke: gold appears as a rule, a
+ * ring, an underline or a numeral, never as a fill behind small text. Muted
+ * text is ink mixed down (68/62/55/52/48/45%), not a separate colour. And
+ * nothing is bold — the bigger the type, the lighter it sets.
+ */
 @theme {
-  /* ── Classical ─────────────────────────────────────────────────────────
-     The design system the admin is built on. Colour is stroke: gold appears
-     as a rule, a ring, an underline, a numeral — never as a fill behind
-     small text. Muted text is ink mixed down (68/62/55/52/48/45%), not a
-     separate colour, and the divider hairline is ink at 16%. */
+  --font-sans: 'Lora', Georgia, serif;
   --font-display: 'Cormorant Garamond', Georgia, serif;
-  --font-body: 'Lora', Georgia, serif;
 
   --color-bg: #f3f2f2;
   --color-surface: #eae9e9;
@@ -25,32 +28,31 @@
   --radius-lg: 7px;
 
   --shadow-lg: 0 12px 32px color-mix(in srgb, #2d2b2b 22%, transparent);
-
-  /* ── Reader app ────────────────────────────────────────────────────────
-     The pre-redesign palette, still driving Home / History / Settings /
-     Account. Retire this block when the reader lands on Classical; the
-     names are prefixed so the two systems can coexist until then. */
-  --font-sans: 'Sora', system-ui, sans-serif;
-  --font-fraunces: 'Fraunces', serif;
-  --color-muted: #6f6457;
-  --color-sage: #2f5d50;
-  --color-sage-strong: #1b4332;
-  --color-card: #fffaf2;
-  --color-banner: #efe1cd;
-  --color-sand: #f7f0e6;
-  --color-sand-accent: #f1dfcc;
 }
 
 @layer base {
   body {
     color-scheme: light;
-    @apply m-0 min-h-screen bg-sand font-sans text-ink leading-relaxed;
+    @apply m-0 min-h-screen bg-bg font-sans text-ink;
+    line-height: 1.55;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-display);
+    font-weight: 400;
   }
 
   /* Every interactive element takes the accent outline, never the browser
      default. */
   :focus-visible {
     @apply outline-2 outline-offset-2 outline-accent;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--color-accent) 30%, transparent);
   }
 }
 
@@ -66,6 +68,12 @@
      stats. Running prose keeps Lora's text figures. */
   .tabular {
     font-variant-numeric: tabular-nums;
+  }
+  /* Definitions justify and hyphenate; the measure is narrow enough that
+     ragged-right leaves holes. */
+  .prose-justify {
+    text-align: justify;
+    hyphens: auto;
   }
 }
 

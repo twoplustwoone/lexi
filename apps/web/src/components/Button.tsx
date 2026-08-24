@@ -1,43 +1,43 @@
 import type { JSX } from 'preact';
 
-type ButtonVariant = 'primary' | 'secondary' | 'outline' | 'ghost' | 'link';
-type ButtonSize = 'sm' | 'md' | 'lg' | 'link';
-type ButtonRadius = 'full' | 'xl' | 'none';
+/**
+ * The component keeps its shape; the variants changed.
+ *
+ * Primary is an accent outline on transparent — never a filled block. Colour
+ * is stroke in this system, and a solid gold slab would be the loudest thing
+ * on any screen it appeared on. Secondary takes the divider outline, ghost is
+ * for dismissals.
+ */
+type ButtonVariant = 'primary' | 'secondary' | 'ghost';
+type ButtonSize = 'sm' | 'md' | 'lg';
 
 const baseClasses =
-  'inline-flex cursor-pointer items-center justify-center font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-sage focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-60';
+  'inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-md border font-display font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-45';
 
 const variantClasses: Record<ButtonVariant, string> = {
-  primary: 'bg-sage text-white hover:bg-sage-strong',
-  secondary: 'bg-sage/10 text-sage-strong hover:bg-sage/20',
-  outline: 'border border-[rgba(30,27,22,0.12)] text-muted hover:text-ink',
-  ghost: 'text-sage-strong hover:text-sage-strong/80',
-  link: 'text-sage-strong hover:text-sage-strong/80',
+  primary: 'border-accent text-accent hover:bg-accent/[0.12] active:bg-accent/[0.22]',
+  secondary: 'border-ink/[0.16] text-ink hover:bg-ink/[0.07] active:bg-ink/[0.14]',
+  ghost: 'border-transparent text-accent hover:bg-accent/[0.1] active:bg-accent/[0.18]',
 };
 
+/** 46px on mobile, 44px minimum everywhere. */
 const sizeClasses: Record<ButtonSize, string> = {
-  sm: 'px-3 py-1 text-sm',
-  md: 'px-4 py-2 text-sm',
-  lg: 'px-4 py-2 text-base',
-  link: 'p-0 text-sm',
-};
-
-const radiusClasses: Record<ButtonRadius, string> = {
-  full: 'rounded-full',
-  xl: 'rounded-xl',
-  none: '',
+  sm: 'min-h-[38px] px-3 text-[13px]',
+  md: 'min-h-[44px] px-4 text-[14px]',
+  lg: 'min-h-[46px] px-4 text-[14px]',
 };
 
 export type ButtonProps = JSX.ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: ButtonVariant;
   size?: ButtonSize;
-  radius?: ButtonRadius;
+  /** Full-width, for the day-one invitation and the sync upsell. */
+  block?: boolean;
 };
 
 export function Button({
   variant = 'primary',
   size = 'md',
-  radius = 'xl',
+  block = false,
   className,
   type = 'button',
   ...props
@@ -46,7 +46,7 @@ export function Button({
     baseClasses,
     variantClasses[variant],
     sizeClasses[size],
-    radiusClasses[radius],
+    block ? 'w-full' : '',
     className,
   ]
     .filter(Boolean)
