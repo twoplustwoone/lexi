@@ -14,12 +14,16 @@
     <link rel="icon" type="image/svg+xml" href="/icons/icon.svg" />
     <link rel="icon" href="/icons/icon-192.png" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- Preloaded so the type arrives with the page rather than a screen
+         later. Both faces are used above the fold on every route. -->
     <link
-      href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600&family=Lora:ital,wght@0,400;0,600;1,400&display=swap"
-      rel="stylesheet"
+      rel="preload"
+      as="font"
+      type="font/woff2"
+      href="/fonts/cormorant-garamond-latin.woff2"
+      crossorigin
     />
+    <link rel="preload" as="font" type="font/woff2" href="/fonts/lora-latin.woff2" crossorigin />
     <title>Lexi</title>
   </head>
   <body>

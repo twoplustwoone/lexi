@@ -211,8 +211,11 @@ export function Words(_props: { path?: string }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {/* Nothing sits above today's word but the wordmark and the date rule. */}
-      <div className="flex flex-none items-center gap-1.5 px-7 pt-1">
+      {/* Nothing sits above today's word but the wordmark and the date rule.
+          The row holds a 44px height whether or not the search target is in
+          it: letting a touch target drop into an 18px row once history
+          arrived pushed the whole page down by 25px. */}
+      <div className="flex h-11 flex-none items-center gap-1.5 px-7">
         <span className="font-display text-[12px] uppercase tracking-[0.28em] text-ink/[0.6]">
           Lexi
         </span>

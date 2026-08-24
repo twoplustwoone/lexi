@@ -1,6 +1,14 @@
 const CACHE_VERSION = new URL(self.location.href).searchParams.get('v') || 'v2';
 const CACHE_NAME = `wotd-shell-${CACHE_VERSION}`;
-const APP_SHELL = ['/', '/index.html', '/manifest.webmanifest'];
+const APP_SHELL = [
+  '/',
+  '/index.html',
+  '/manifest.webmanifest',
+  // Self-hosted and preloaded on every route. Precached so an offline first
+  // launch is not set in the fallback serif.
+  '/fonts/cormorant-garamond-latin.woff2',
+  '/fonts/lora-latin.woff2',
+];
 
 // Vite emits content-hashed filenames under /assets/, so those bytes can never
 // change under a given URL and are safe to serve from cache forever. Everything
