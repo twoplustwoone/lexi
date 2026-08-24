@@ -127,15 +127,15 @@ export function App() {
     </PreactRouter>
   );
 
-  // The router must wait for fetchMe: AdminRoute reads user.isAdmin, and on a
-  // first paint that is still false, so rendering early bounces an admin
-  // straight back to the stream.
-  const loading = <p className="px-7 py-8 text-[16px] text-ink/[0.55]">Loading your words.</p>;
-
   if (isAdminRoute) {
     return (
       <>
-        {ready ? router : loading}
+        {/* Only admin waits on fetchMe — AdminRoute reads user.isAdmin, and on
+            a first paint that is still false, which would bounce an admin back
+            to the stream. The reader needs none of that and must not pay for
+            it: gating it here cost a whole round-trip before its own fetch
+            could even start. */}
+        {ready ? router : null}
         <AuthSheet open={authOpen} onClose={closeAuth} user={user} onUserChange={setUser} />
       </>
     );
@@ -143,7 +143,7 @@ export function App() {
 
   return (
     <div className="flex h-[100dvh] flex-col bg-bg text-ink">
-      <main className="flex min-h-0 flex-1 flex-col">{ready ? router : loading}</main>
+      <main className="flex min-h-0 flex-1 flex-col">{router}</main>
 
       {/* Two destinations. Search and word detail keep Words active. */}
       <TabBar active={activeTab} />

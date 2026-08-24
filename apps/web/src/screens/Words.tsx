@@ -2,7 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { Search } from 'lucide-react';
 import { route } from 'preact-router';
 
-import { fetchTodayWord, markWordViewed, syncHistoryCache } from '../api';
+import {
+  fetchTodayWord,
+  fetchTodayWordWithIdentity,
+  markWordViewed,
+  syncHistoryCache,
+} from '../api';
 import { useSchedule } from '../useSchedule';
 import { Button } from '../components/Button';
 import { DateRule } from '../components/reader/DateRule';
@@ -30,6 +35,11 @@ export function Words(_props: { path?: string }) {
   const [error, setError] = useState<string | null>(null);
   const [deliverySheetOpen, setDeliverySheetOpen] = useState(false);
   const [stickyMonth, setStickyMonth] = useState<MonthGroup | null>(null);
+  // "Day one" is a claim about the archive being empty, so it may only be made
+  // once the archive has actually been read. Deriving it from the word's
+  // loading flag flashed the first-run invitation at returning readers whose
+  // history had not arrived yet.
+  const [archiveLoaded, setArchiveLoaded] = useState(false);
   const schedule = useSchedule(null);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -77,44 +87,77 @@ export function Words(_props: { path?: string }) {
       }
     };
 
-    const load = async () => {
-      let served = false;
+    /** Today's date, computed locally — no round-trip needed to show it. */
+    const todayKey = new Date().toISOString().slice(0, 10);
+
+    /**
+     * Paint from IndexedDB before touching the network.
+     *
+     * A returning reader already has their words on the device. Waiting on
+     * two round-trips to show them meant a loading sentence, then a second
+     * loading sentence, then the content — for data that was sitting locally
+     * the whole time.
+     */
+    const paintFromCache = async () => {
+      const history = await getHistory().catch(() => []);
+      if (cancelled || history.length === 0) return;
+      const entries = sortNewestFirst(history.map(toStreamEntry));
+      setArchive(entries);
+      cachedArchive = entries;
+      setArchiveLoaded(true);
+      if (!cachedToday && entries[0]?.date === todayKey) {
+        setToday(entries[0]);
+      }
+      setLoading(false);
+    };
+
+    const loadToday = async () => {
       try {
-        const payload = await fetchTodayWord();
+        const payload = await fetchTodayWordWithIdentity();
+        if (cancelled) return;
         const entry = toEntry(payload);
         setToday(entry);
         cachedToday = entry;
-        served = true;
+        setError(null);
         void markWordViewed(payload.wordPoolId).catch(() => undefined);
         if (payload.detailsStatus === 'pending') {
           void pollWhilePending();
         }
       } catch (err) {
-        if (!cachedToday) {
+        // Only an empty screen is worth an error; a cached word still reads.
+        if (!cancelled && !cachedToday) {
           setError(err instanceof Error ? err.message : 'Could not load today’s word.');
         }
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
+    };
 
-      // Offline renders identically to ready — cached words are not marked.
+    const refreshArchive = async () => {
       await syncHistoryCache().catch(() => undefined);
       const history = await getHistory().catch(() => []);
       if (cancelled) return;
       const entries = sortNewestFirst(history.map(toStreamEntry));
 
-      // A cold offline launch has no cached word, so the newest stored entry
+      // A cold offline launch has no served word, so the newest stored entry
       // stands in as today's reading rather than appearing only as a dimmed
       // archive row.
-      if (!served && !cachedToday && entries.length > 0) {
-        const latest = entries[0];
-        setToday(latest);
-        cachedToday = latest;
+      setToday((current) => {
+        if (current || entries.length === 0) return current;
+        cachedToday = entries[0];
         setError(null);
-      }
+        return entries[0];
+      });
 
       setArchive(entries);
       cachedArchive = entries;
+      setArchiveLoaded(true);
+    };
+
+    const load = async () => {
+      // Local first, then both network reads at once rather than in a chain.
+      await paintFromCache();
+      await Promise.all([loadToday(), refreshArchive()]);
     };
 
     void load();
@@ -133,12 +176,10 @@ export function Words(_props: { path?: string }) {
   const months = useMemo(() => groupByMonth(past), [past]);
   const day = useMemo(() => (today ? dayNumber(archive, today.date) : null), [archive, today]);
 
-  const todayKicker = today
-    ? `Today · ${new Date(`${today.date}T00:00:00`).toLocaleDateString(undefined, {
-        day: 'numeric',
-        month: 'long',
-      })}`
-    : '';
+  const kickerDate = new Date(
+    `${today ? today.date : new Date().toISOString().slice(0, 10)}T00:00:00`
+  ).toLocaleDateString(undefined, { day: 'numeric', month: 'long' });
+  const todayKicker = `Today · ${kickerDate}`;
 
   // The sticky month header swaps as groups cross the top of the scroller.
   useEffect(() => {
@@ -166,7 +207,7 @@ export function Words(_props: { path?: string }) {
     monthRefs.current.get(key)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
-  const isDayOne = !loading && past.length === 0;
+  const isDayOne = archiveLoaded && !loading && past.length === 0;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -201,16 +242,21 @@ export function Words(_props: { path?: string }) {
 
       <div className="relative flex min-h-0 flex-1">
         <div ref={scrollRef} className="flex-1 overflow-y-auto px-7 pt-4">
+          {/* The date rule is a local computation, so the entry keeps its
+              shape from the first paint and only the word arrives into it. A
+              sentence that swaps for another sentence and then for content
+              reads as three separate screens. */}
+          <DateRule
+            kicker={isDayOne ? `Day 1 · ${kickerDate}` : todayKicker}
+            dayCount={isDayOne ? null : day}
+          />
+
           {error && !today ? (
-            <p className="py-8 text-[16px] text-accent-strong">{error}</p>
-          ) : loading && !today ? (
-            <p className="py-8 text-[16px] text-ink/[0.55]">Loading today’s word.</p>
-          ) : today ? (
+            <p className="mt-5 text-[16px] text-accent-strong">{error}</p>
+          ) : !today ? (
+            <div aria-hidden="true" className="mt-4 h-[58px]" />
+          ) : (
             <>
-              <DateRule
-                kicker={isDayOne ? `Day 1 · ${todayKicker.split('· ')[1] ?? ''}` : todayKicker}
-                dayCount={isDayOne ? null : day}
-              />
               <WordEntryFull entry={today} />
 
               {isDayOne ? (
@@ -237,7 +283,7 @@ export function Words(_props: { path?: string }) {
                 </div>
               ) : null}
             </>
-          ) : null}
+          )}
 
           {/* The previous day at half opacity: the scroll affordance. */}
           {past.length > 0 ? (

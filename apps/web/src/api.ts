@@ -154,6 +154,24 @@ export async function fetchTodayWord(): Promise<DailyWordPayload> {
   return apiFetch<DailyWordPayload>('/word/today');
 }
 
+/**
+ * Today's word, registering an anonymous identity only if the request is
+ * actually rejected.
+ *
+ * Registration used to run first, unconditionally, which cost every returning
+ * reader a full round-trip before the word was even requested — they already
+ * hold the cookie that identifies them. Only a genuinely first-ever visit
+ * needs the handshake, so pay for it only when the server says so.
+ */
+export async function fetchTodayWordWithIdentity(): Promise<DailyWordPayload> {
+  try {
+    return await fetchTodayWord();
+  } catch {
+    await registerAnonymousIdentity();
+    return fetchTodayWord();
+  }
+}
+
 export async function fetchHistory(): Promise<HistoryEntry[]> {
   const response = await apiFetch<{ history: HistoryEntry[] }>('/history');
   return response.history;
