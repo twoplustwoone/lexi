@@ -28,7 +28,9 @@ test.describe('service worker', () => {
     // goto is the one navigation there should ever be. A first visit has no
     // superseded assets to refresh, so reloading is a blank flash for nothing.
     expect(mainFrameNavigations).toBe(1);
-    await expect(page.getByRole('link', { name: 'Settings' })).toBeVisible();
+    await expect(
+      page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'You' })
+    ).toBeVisible();
   });
 
   test('renders the app while controlled by the worker', async ({ page }) => {
@@ -41,6 +43,8 @@ test.describe('service worker', () => {
     // straight from the network.
     await page.reload();
     await expect(page.getByText('Lexi', { exact: true })).toBeVisible();
-    await expect(page.getByRole('link', { name: 'History' })).toBeVisible();
+    await expect(
+      page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Words' })
+    ).toBeVisible();
   });
 });

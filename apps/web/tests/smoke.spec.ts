@@ -221,6 +221,8 @@ type ApiOverrides = {
   settings?: typeof defaultSettings;
   history?: typeof defaultHistory;
   word?: typeof defaultTodayWord;
+  /** Delays every response, so serial round-trips become observable. */
+  latencyMs?: number;
 };
 
 async function mockApi(page: Page, overrides: ApiOverrides = {}) {
@@ -232,6 +234,10 @@ async function mockApi(page: Page, overrides: ApiOverrides = {}) {
   await page.route('**/api/**', async (route) => {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
+
+    if (overrides.latencyMs) {
+      await new Promise((resolve) => setTimeout(resolve, overrides.latencyMs));
+    }
 
     if (request.method() === 'OPTIONS') {
       await route.fulfill({ status: 204 });
@@ -357,6 +363,37 @@ test('the stream opens on today\'s word with nothing above it', async ({ page })
   await expect(nav.getByRole('button', { name: 'Words' })).toBeVisible();
   await expect(nav.getByRole('button', { name: 'You' })).toBeVisible();
   await expect(page.getByRole('link', { name: 'History' })).toHaveCount(0);
+});
+
+test('the reader never shows a loading sentence', async ({ page }) => {
+  // Every call costs 1.2s, so any serial chain of round-trips is wide open.
+  await mockApi(page, { latencyMs: 1200 });
+
+  await page.goto('/', { waitUntil: 'commit' });
+
+  // Sample every frame from navigation onward. Asserting visibility at a
+  // moment proves nothing here — Playwright retries, so it would happily wait
+  // out two loading screens and then pass. What matters is that no frame ever
+  // contained one.
+  const frames: string[] = [];
+  for (let i = 0; i < 150; i += 1) {
+    const text = await page
+      .evaluate(() => document.body.innerText.replace(/\s+/g, ' '))
+      .catch(() => '');
+    if (text.trim()) frames.push(text);
+    if (text.includes(defaultTodayWord.word)) break;
+    await page.waitForTimeout(100);
+  }
+
+  expect(frames.some((frame) => frame.includes(defaultTodayWord.word))).toBe(true);
+  expect(frames.filter((frame) => /Loading/i.test(frame))).toEqual([]);
+
+  // The wordmark is local, so it precedes the word rather than arriving with
+  // it. innerText reflects the CSS uppercase, hence the case-insensitive match.
+  expect(frames[0]).toMatch(/lexi/i);
+
+  // And the first-run invitation must never flash at a reader who has history.
+  expect(frames.filter((frame) => frame.includes('This is the whole app'))).toEqual([]);
 });
 
 test('an archive entry expands in place, without accordion chrome', async ({ page }) => {
