@@ -10,6 +10,10 @@
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
 
+# Font files are versioned by name and never edited in place.
+/fonts/*
+  Cache-Control: public, max-age=31536000, immutable
+
 # Stable URLs. Cheap to revalidate and it keeps a redeploy honest.
 /icons/*
   Cache-Control: public, max-age=0, must-revalidate
