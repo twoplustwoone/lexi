@@ -287,22 +287,23 @@ describe('Deterministic Word Selection', () => {
     await env.DB.prepare('DELETE FROM word_details').run();
     await env.DB.prepare('DELETE FROM word_pool').run();
 
-    // Insert a larger pool of words
+    // Insert a larger pool of words. Batched rather than 200 sequential
+    // round-trips, which took this hook past its 10s timeout on CI.
     const now = new Date().toISOString();
+    const poolInsert = env.DB.prepare(
+      'INSERT INTO word_pool (id, word, enabled, source, created_at) VALUES (?, ?, 1, ?, ?)'
+    );
+    const detailsInsert = env.DB.prepare(
+      `INSERT INTO word_details (word_pool_id, status, review_status)
+       VALUES (?, 'ready', 'approved')`
+    );
+    const seed = [];
     for (let i = 1; i <= 100; i++) {
       const id = TEST_BASE_ID + 1000 + i; // Use different range from other tests
-      await env.DB.prepare(
-        'INSERT INTO word_pool (id, word, enabled, source, created_at) VALUES (?, ?, 1, ?, ?)'
-      )
-        .bind(id, `word${i}`, 'test', now)
-        .run();
-      await env.DB.prepare(
-        `INSERT INTO word_details (word_pool_id, status, review_status)
-         VALUES (?, 'ready', 'approved')`
-      )
-        .bind(id)
-        .run();
+      seed.push(poolInsert.bind(id, `word${i}`, 'test', now));
+      seed.push(detailsInsert.bind(id));
     }
+    await env.DB.batch(seed);
   });
 
   afterEach(async () => {
@@ -374,6 +375,45 @@ describe('Personalized Word Selection', () => {
     )
       .bind(id)
       .run();
+  }
+
+  /**
+   * Seeds many words in one round-trip.
+   *
+   * seedWord costs two statements, so a loop of sixty spent 120 round-trips
+   * inside a single test — 4.4s of its 5s budget on CI, which is a failure
+   * waiting for a slower runner.
+   */
+  async function seedWords(
+    entries: Array<{
+      id: number;
+      word: string;
+      tier: number | null;
+      difficultyCategory?: WordDifficulty;
+    }>
+  ): Promise<void> {
+    const now = new Date().toISOString();
+    const poolInsert = env.DB.prepare(
+      `INSERT INTO word_pool
+       (id, word, enabled, tier, difficulty_category, source, created_at)
+       VALUES (?, ?, 1, ?, ?, ?, ?)`
+    );
+    const detailsInsert = env.DB.prepare(
+      `INSERT INTO word_details (word_pool_id, status, review_status)
+       VALUES (?, 'ready', 'approved')`
+    );
+    const statements = entries.flatMap((entry) => [
+      poolInsert.bind(
+        entry.id,
+        entry.word,
+        entry.tier,
+        entry.difficultyCategory ?? inferDifficultyCategory(entry.tier),
+        'test',
+        now
+      ),
+      detailsInsert.bind(entry.id),
+    ]);
+    await env.DB.batch(statements);
   }
 
   beforeEach(async () => {
@@ -461,9 +501,9 @@ describe('Personalized Word Selection', () => {
   });
 
   it('can produce different words for different users on the same date when personalized', async () => {
-    for (let i = 0; i < 60; i++) {
-      await seedWord(7000 + i, `easyword${i}`, 20);
-    }
+    await seedWords(
+      Array.from({ length: 60 }, (_, i) => ({ id: 7000 + i, word: `easyword${i}`, tier: 20 }))
+    );
 
     let foundDifferent = false;
     for (let day = 1; day <= 12; day++) {
