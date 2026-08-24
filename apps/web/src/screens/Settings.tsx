@@ -263,9 +263,9 @@ export function Settings({ user }: SettingsProps) {
   return (
     <section className="grid gap-5">
       <form className={`${cardBase} p-6`} onSubmit={handleSave}>
-        <h2 className="font-[var(--font-display)] text-2xl">Notifications</h2>
+        <h2 className="font-[var(--font-fraunces)] text-2xl">Notifications</h2>
         <div className="mt-4 flex items-center gap-4">
-          <label className="relative inline-flex h-7 w-12 cursor-pointer items-center focus-within:outline-2 focus-within:outline-accent focus-within:outline-offset-2">
+          <label className="relative inline-flex h-7 w-12 cursor-pointer items-center focus-within:outline-2 focus-within:outline-sage focus-within:outline-offset-2">
             <input
               type="checkbox"
               checked={enabled}
@@ -273,7 +273,7 @@ export function Settings({ user }: SettingsProps) {
               className="peer sr-only"
               onChange={(event) => handleToggle(event.currentTarget.checked)}
             />
-            <span className="absolute inset-0 rounded-full bg-[#e1d3c0] transition peer-checked:bg-accent" />
+            <span className="absolute inset-0 rounded-full bg-[#e1d3c0] transition peer-checked:bg-sage" />
             <span className="pointer-events-none absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow-[0_4px_8px_rgba(0,0,0,0.15)] transition-transform peer-checked:translate-x-5" />
           </label>
           <div>
@@ -289,7 +289,7 @@ export function Settings({ user }: SettingsProps) {
           <span className="font-semibold">Delivery time</span>
           <input
             type="time"
-            className="rounded-xl border border-[rgba(30,27,22,0.12)] bg-white px-3 py-2 text-sm focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+            className="rounded-xl border border-[rgba(30,27,22,0.12)] bg-white px-3 py-2 text-sm focus-visible:outline-2 focus-visible:outline-sage focus-visible:outline-offset-2"
             value={deliveryTime}
             onChange={(event) => setDeliveryTime(event.currentTarget.value)}
             step={1800}
@@ -328,7 +328,7 @@ export function Settings({ user }: SettingsProps) {
                   disabled={isSaving || isToggling}
                   className={`cursor-pointer rounded-xl border px-3 py-2 text-left transition disabled:cursor-not-allowed ${
                     isSelected
-                      ? 'border-accent bg-accent/10 text-accent-strong'
+                      ? 'border-sage bg-sage/10 text-sage-strong'
                       : 'border-[rgba(30,27,22,0.12)] bg-white text-ink'
                   }`}
                 >
@@ -340,7 +340,7 @@ export function Settings({ user }: SettingsProps) {
           </div>
         </fieldset>
 
-        {message ? <p className="mt-3 text-sm text-accent-strong">{message}</p> : null}
+        {message ? <p className="mt-3 text-sm text-sage-strong">{message}</p> : null}
         <Button className="mt-4" type="submit" disabled={isSaving || isToggling}>
           {isSaving ? <Loader label="Saving..." tone="light" /> : 'Save settings'}
         </Button>

@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
-import PreactRouter, { route, useRouter } from 'preact-router';
+import PreactRouter, { getCurrentUrl, route, useRouter } from 'preact-router';
 import { Link } from 'preact-router/match';
 
 import {
@@ -122,22 +122,22 @@ function NavLinks() {
         } ${indicatorReady ? 'opacity-100' : 'opacity-0'}`}
       />
       <Link
-        activeClassName="nav-active bg-white text-accent-strong shadow-[0_3px_8px_rgba(29,25,18,0.12)] md:bg-transparent md:shadow-none"
-        className="relative z-10 flex-1 rounded-full px-3 py-1.5 text-center text-sm font-semibold text-muted no-underline transition-colors hover:text-accent-strong md:flex-initial md:px-4 md:py-1.5 md:text-sm"
+        activeClassName="nav-active bg-white text-sage-strong shadow-[0_3px_8px_rgba(29,25,18,0.12)] md:bg-transparent md:shadow-none"
+        className="relative z-10 flex-1 rounded-full px-3 py-1.5 text-center text-sm font-semibold text-muted no-underline transition-colors hover:text-sage-strong md:flex-initial md:px-4 md:py-1.5 md:text-sm"
         href="/"
       >
         Home
       </Link>
       <Link
-        activeClassName="nav-active bg-white text-accent-strong shadow-[0_3px_8px_rgba(29,25,18,0.12)] md:bg-transparent md:shadow-none"
-        className="relative z-10 flex-1 rounded-full px-3 py-1.5 text-center text-sm font-semibold text-muted no-underline transition-colors hover:text-accent-strong md:flex-initial md:px-4 md:py-1.5 md:text-sm"
+        activeClassName="nav-active bg-white text-sage-strong shadow-[0_3px_8px_rgba(29,25,18,0.12)] md:bg-transparent md:shadow-none"
+        className="relative z-10 flex-1 rounded-full px-3 py-1.5 text-center text-sm font-semibold text-muted no-underline transition-colors hover:text-sage-strong md:flex-initial md:px-4 md:py-1.5 md:text-sm"
         href="/history"
       >
         History
       </Link>
       <Link
-        activeClassName="nav-active bg-white text-accent-strong shadow-[0_3px_8px_rgba(29,25,18,0.12)] md:bg-transparent md:shadow-none"
-        className="relative z-10 flex-1 rounded-full px-3 py-1.5 text-center text-sm font-semibold text-muted no-underline transition-colors hover:text-accent-strong md:flex-initial md:px-4 md:py-1.5 md:text-sm"
+        activeClassName="nav-active bg-white text-sage-strong shadow-[0_3px_8px_rgba(29,25,18,0.12)] md:bg-transparent md:shadow-none"
+        className="relative z-10 flex-1 rounded-full px-3 py-1.5 text-center text-sm font-semibold text-muted no-underline transition-colors hover:text-sage-strong md:flex-initial md:px-4 md:py-1.5 md:text-sm"
         href="/settings"
       >
         Settings
@@ -215,13 +215,13 @@ function AvatarMenu({
 
   const initial = user.userId?.charAt(0)?.toUpperCase() ?? 'L';
   const menuItemClassName =
-    'flex w-full cursor-pointer items-center px-5 py-3 text-left font-semibold text-ink no-underline transition-colors hover:bg-sand focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2';
+    'flex w-full cursor-pointer items-center px-5 py-3 text-left font-semibold text-ink no-underline transition-colors hover:bg-sand focus-visible:outline focus-visible:outline-2 focus-visible:outline-sage focus-visible:outline-offset-2';
 
   return (
     <div ref={menuRef} className="relative">
       <button
         type="button"
-        className="flex h-11 w-11 cursor-pointer items-center justify-center rounded-full border border-[rgba(30,27,22,0.12)] bg-white text-sm font-semibold text-accent-strong shadow-[0_8px_18px_rgba(29,25,18,0.12)] transition hover:text-accent-strong/80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+        className="flex h-11 w-11 cursor-pointer items-center justify-center rounded-full border border-[rgba(30,27,22,0.12)] bg-white text-sm font-semibold text-sage-strong shadow-[0_8px_18px_rgba(29,25,18,0.12)] transition hover:text-sage-strong/80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sage focus-visible:outline-offset-2"
         onClick={() => setOpen((prev) => !prev)}
         aria-haspopup="menu"
         aria-expanded={open}
@@ -271,6 +271,8 @@ export function App() {
   });
   const [ready, setReady] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
+  // The router lives below the chrome, so the chrome tracks the route itself.
+  const [path, setPath] = useState(() => getCurrentUrl());
 
   const openAuth = () => setAuthOpen(true);
   const closeAuth = () => setAuthOpen(false);
@@ -352,36 +354,48 @@ export function App() {
     return () => window.removeEventListener('appinstalled', handler);
   }, [user.userId]);
 
-  return (
-    <div className="flex min-h-screen flex-col gap-6 bg-[radial-gradient(circle_at_top,_#fdf7ee_0%,_#f7f0e6_45%,_#f1dfcc_100%)] px-6 pb-16 pt-6 text-ink md:px-12">
-      <header className="flex flex-col gap-4 md:grid md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:items-center">
-        <div className="flex items-center justify-between gap-4 md:justify-start">
-          <div className="flex items-center gap-4">
-            <img
-              src={appIcon}
-              alt="Lexi"
-              className="h-14 w-14 rounded-[18px] shadow-[0_18px_40px_rgba(29,25,18,0.12)]"
-            />
-            <div>
-              <p className="m-0 font-[var(--font-display)] text-2xl">Lexi</p>
-              <p className="mt-1 text-sm text-muted">Daily rituals, kept simple.</p>
-            </div>
-          </div>
-          <AuthAction className="md:hidden" />
-        </div>
-        <div className="flex w-full justify-start md:justify-center">
-          <NavLinks />
-        </div>
-        <AuthAction className="hidden md:flex md:justify-end" />
-      </header>
+  // Admin is its own surface: it brings its own nav, its own ground and its own
+  // way back to the app, so the reader chrome steps aside for it.
+  const isAdminRoute = path.startsWith('/admin');
 
-      <main className="flex-1">
+  return (
+    <div
+      className={
+        isAdminRoute
+          ? 'min-h-screen text-ink'
+          : 'flex min-h-screen flex-col gap-6 bg-[radial-gradient(circle_at_top,_#fdf7ee_0%,_#f7f0e6_45%,_#f1dfcc_100%)] px-6 pb-16 pt-6 text-ink md:px-12'
+      }
+    >
+      {isAdminRoute ? null : (
+        <header className="flex flex-col gap-4 md:grid md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:items-center">
+          <div className="flex items-center justify-between gap-4 md:justify-start">
+            <div className="flex items-center gap-4">
+              <img
+                src={appIcon}
+                alt="Lexi"
+                className="h-14 w-14 rounded-[18px] shadow-[0_18px_40px_rgba(29,25,18,0.12)]"
+              />
+              <div>
+                <p className="m-0 font-[var(--font-fraunces)] text-2xl">Lexi</p>
+                <p className="mt-1 text-sm text-muted">Daily rituals, kept simple.</p>
+              </div>
+            </div>
+            <AuthAction className="md:hidden" />
+          </div>
+          <div className="flex w-full justify-start md:justify-center">
+            <NavLinks />
+          </div>
+          <AuthAction className="hidden md:flex md:justify-end" />
+        </header>
+      )}
+
+      <main className={isAdminRoute ? '' : 'flex-1'}>
         {!ready ? (
           <div className="rounded-[20px] border border-[rgba(30,27,22,0.12)] bg-card p-6 shadow-[0_18px_40px_rgba(29,25,18,0.12)]">
             <Loader label="Loading your daily word..." />
           </div>
         ) : (
-          <PreactRouter>
+          <PreactRouter onChange={(event) => setPath(event.url)}>
             <Home path="/" user={user} onOpenAuth={openAuth} />
             <History path="/history" user={user} />
             <Settings path="/settings" user={user} />

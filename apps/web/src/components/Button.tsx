@@ -5,14 +5,14 @@ type ButtonSize = 'sm' | 'md' | 'lg' | 'link';
 type ButtonRadius = 'full' | 'xl' | 'none';
 
 const baseClasses =
-  'inline-flex cursor-pointer items-center justify-center font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-60';
+  'inline-flex cursor-pointer items-center justify-center font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-sage focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-60';
 
 const variantClasses: Record<ButtonVariant, string> = {
-  primary: 'bg-accent text-white hover:bg-accent-strong',
-  secondary: 'bg-accent/10 text-accent-strong hover:bg-accent/20',
+  primary: 'bg-sage text-white hover:bg-sage-strong',
+  secondary: 'bg-sage/10 text-sage-strong hover:bg-sage/20',
   outline: 'border border-[rgba(30,27,22,0.12)] text-muted hover:text-ink',
-  ghost: 'text-accent-strong hover:text-accent-strong/80',
-  link: 'text-accent-strong hover:text-accent-strong/80',
+  ghost: 'text-sage-strong hover:text-sage-strong/80',
+  link: 'text-sage-strong hover:text-sage-strong/80',
 };
 
 const sizeClasses: Record<ButtonSize, string> = {

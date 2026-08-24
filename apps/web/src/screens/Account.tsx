@@ -1,7 +1,8 @@
 import { useState } from 'preact/hooks';
 
+import { route } from 'preact-router';
+
 import { fetchMe, logout, resetAnonymousIdentity } from '../api';
-import { AdminPanel } from '../components/AdminPanel';
 import { Button } from '../components/Button';
 import { getAnonymousId } from '../identity';
 
@@ -57,7 +58,7 @@ export function Account({ user, onOpenAuth, onUserChange }: AccountProps) {
   return (
     <section className="grid gap-5">
       <div className={`${cardBase} p-6`}>
-        <h2 className="font-[var(--font-display)] text-2xl">Account</h2>
+        <h2 className="font-[var(--font-fraunces)] text-2xl">Account</h2>
         <p className="mt-1 text-muted">
           {user.isAuthenticated
             ? `Signed in as ${user.userId}`
@@ -73,7 +74,7 @@ export function Account({ user, onOpenAuth, onUserChange }: AccountProps) {
             Sign in or create account
           </Button>
         ) : null}
-        {status ? <p className="mt-3 text-sm text-accent-strong">{status}</p> : null}
+        {status ? <p className="mt-3 text-sm text-sage-strong">{status}</p> : null}
       </div>
 
       {!user.isAuthenticated ? (
@@ -91,8 +92,13 @@ export function Account({ user, onOpenAuth, onUserChange }: AccountProps) {
 
       {user.isAuthenticated && user.isAdmin ? (
         <div className={`${cardBase} p-6`}>
-          <h2 className="mb-4 font-[var(--font-display)] text-2xl">Admin Panel</h2>
-          <AdminPanel currentUserId={user.userId} />
+          <h2 className="mb-2 font-[var(--font-fraunces)] text-2xl">Admin</h2>
+          <p className="mb-4 text-sm text-muted">
+            Word pool, review queue, notifications and people.
+          </p>
+          <Button variant="secondary" onClick={() => route('/admin')}>
+            Open admin
+          </Button>
         </div>
       ) : null}
     </section>

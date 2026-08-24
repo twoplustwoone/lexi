@@ -265,7 +265,7 @@ export function Home({ user, onOpenAuth }: HomeProps) {
           <span>{reminder}</span>
           <a
             href="/settings"
-            className="shrink-0 text-sm font-semibold text-accent-strong underline underline-offset-2"
+            className="shrink-0 text-sm font-semibold text-sage-strong underline underline-offset-2"
           >
             Open settings
           </a>
@@ -279,7 +279,7 @@ export function Home({ user, onOpenAuth }: HomeProps) {
       <article className={`${cardBase} p-6`}>
         <header className="space-y-1">
           <p className="text-xs uppercase tracking-[0.2em] text-muted">Today's word</p>
-          <h1 className="font-[var(--font-display)] text-4xl">{word.word}</h1>
+          <h1 className="font-[var(--font-fraunces)] text-4xl">{word.word}</h1>
           {phonetics && (
             <div className="flex items-center gap-2">
               <p className="text-sm text-muted">{phonetics}</p>
@@ -314,7 +314,7 @@ export function Home({ user, onOpenAuth }: HomeProps) {
             </div>
           )}
           {pronunciationMessage ? (
-            <p className="text-xs text-accent-strong">{pronunciationMessage}</p>
+            <p className="text-xs text-sage-strong">{pronunciationMessage}</p>
           ) : null}
         </header>
         {renderDetails()}

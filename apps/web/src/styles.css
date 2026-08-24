@@ -3,12 +3,38 @@
 @source "./**/*.{ts,tsx}";
 
 @theme {
+  /* ── Classical ─────────────────────────────────────────────────────────
+     The design system the admin is built on. Colour is stroke: gold appears
+     as a rule, a ring, an underline, a numeral — never as a fill behind
+     small text. Muted text is ink mixed down (68/62/55/52/48/45%), not a
+     separate colour, and the divider hairline is ink at 16%. */
+  --font-display: 'Cormorant Garamond', Georgia, serif;
+  --font-body: 'Lora', Georgia, serif;
+
+  --color-bg: #f3f2f2;
+  --color-surface: #eae9e9;
+  --color-ink: #201f1d;
+  --color-accent: #b68235;
+  --color-accent-strong: #7d5411;
+  --color-neutral-100: #f8f4f4;
+  --color-neutral-400: #bab6b6;
+  --color-neutral-900: #2d2b2b;
+
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 7px;
+
+  --shadow-lg: 0 12px 32px color-mix(in srgb, #2d2b2b 22%, transparent);
+
+  /* ── Reader app ────────────────────────────────────────────────────────
+     The pre-redesign palette, still driving Home / History / Settings /
+     Account. Retire this block when the reader lands on Classical; the
+     names are prefixed so the two systems can coexist until then. */
   --font-sans: 'Sora', system-ui, sans-serif;
-  --font-display: 'Fraunces', serif;
-  --color-ink: #1e1b16;
+  --font-fraunces: 'Fraunces', serif;
   --color-muted: #6f6457;
-  --color-accent: #2f5d50;
-  --color-accent-strong: #1b4332;
+  --color-sage: #2f5d50;
+  --color-sage-strong: #1b4332;
   --color-card: #fffaf2;
   --color-banner: #efe1cd;
   --color-sand: #f7f0e6;
@@ -20,6 +46,12 @@
     color-scheme: light;
     @apply m-0 min-h-screen bg-sand font-sans text-ink leading-relaxed;
   }
+
+  /* Every interactive element takes the accent outline, never the browser
+     default. */
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-accent;
+  }
 }
 
 @layer utilities {
@@ -29,6 +61,11 @@
   }
   .no-scrollbar::-webkit-scrollbar {
     display: none;
+  }
+  /* Figures set tabular wherever they stand as data — dates, counts, times,
+     stats. Running prose keeps Lora's text figures. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
   }
 }
 
