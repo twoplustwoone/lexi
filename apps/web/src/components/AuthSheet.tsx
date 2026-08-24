@@ -13,7 +13,7 @@ import {
   type AuthMethodsResponse,
 } from '../api';
 import { Button } from './Button';
-import { Loader } from './Loader';
+import { Sheet } from './reader/Sheet';
 import { getAnonymousId } from '../identity';
 
 interface AuthSheetProps {
@@ -97,23 +97,9 @@ export function AuthSheet({ open, onClose, user, onUserChange }: AuthSheetProps)
     setCodeSent(false);
   }, [open]);
 
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        onClose();
-      }
-    };
-    document.addEventListener('keydown', handleKeyDown);
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.removeEventListener('keydown', handleKeyDown);
-      document.body.style.overflow = previousOverflow;
-    };
-  }, [open, onClose]);
+  // Escape-to-close and the body scroll lock live on Sheet now. Running them
+  // here as well left two effects fighting over document.body.style.overflow,
+  // and whichever restored last could leave the page locked after closing.
 
   useEffect(() => {
     if (!open || !hasGoogleClientId || !googleButtonRef.current) {
@@ -302,203 +288,200 @@ export function AuthSheet({ open, onClose, user, onUserChange }: AuthSheetProps)
     }
   };
 
-  const inputClass =
-    'rounded-xl border border-[rgba(30,27,22,0.12)] bg-white px-3 py-2 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-sage focus-visible:outline-offset-2';
+  /* An underline, not a box — the hairline turns accent on focus. */
+  const fieldClass =
+    'w-full border-0 border-b border-ink/[0.16] bg-transparent pb-2 text-[16px] text-ink caret-accent outline-none placeholder:text-ink/[0.45] focus:border-accent';
+
+  const googleBlock = (caption: string) => (
+    <div>
+      <div className="mb-3 text-[10px] uppercase tracking-[0.16em] text-accent">{caption}</div>
+      {hasGoogleClientId ? (
+        <div className="flex justify-center" ref={googleButtonRef} />
+      ) : (
+        <p className="m-0 text-[14px] leading-[1.55] text-ink/[0.6]">
+          Google sign-in needs a client ID ending in .apps.googleusercontent.com.
+        </p>
+      )}
+    </div>
+  );
+
+  const emailRow = (
+    <div className="flex items-center justify-between border-b border-ink/[0.16] pb-2">
+      <span className="text-[15px]">{email}</span>
+      <button
+        type="button"
+        onClick={() => {
+          setStage('email');
+          setMethods(null);
+          setStatus(null);
+          setPassword('');
+          setEmailCode('');
+          setCodeSent(false);
+        }}
+        className="min-h-[44px] cursor-pointer text-[11px] uppercase tracking-[0.12em] text-accent"
+      >
+        Change
+      </button>
+    </div>
+  );
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4 py-6 backdrop-blur-sm"
-      role="presentation"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-lg overflow-hidden rounded-[24px] border border-[rgba(30,27,22,0.12)] bg-card p-6 shadow-[0_24px_60px_rgba(29,25,18,0.25)]"
-        role="dialog"
-        aria-modal="true"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h2 className="font-[var(--font-fraunces)] text-2xl">Sign in or create account</h2>
-            <p className="mt-1 text-sm text-muted">
-              Keep your history, schedule, and preferences synced across devices.
-            </p>
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            radius="full"
-            className="font-normal"
-            onClick={onClose}
-            aria-label="Close sign in"
-          >
-            Close
-          </Button>
+    <Sheet open={open} onClose={onClose} labelledBy="auth-sheet-title">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 id="auth-sheet-title" className="m-0 font-display text-[25px] font-normal">
+            Sign in or create account
+          </h2>
+          <p className="m-0 mt-1 text-[14px] leading-[1.55] text-ink/[0.65]">
+            Keep your history, schedule, and preferences synced across devices.
+          </p>
         </div>
+        <Button variant="ghost" size="md" onClick={onClose} aria-label="Close sign in">
+          Close
+        </Button>
+      </div>
 
-        {status ? <p className="mt-4 text-sm text-sage-strong">{status}</p> : null}
+      {/* Status renders as one line, never in a bordered alert. */}
+      {status ? <p className="m-0 mt-3 text-[14px] text-accent-strong">{status}</p> : null}
 
-        {stage === 'email' ? (
-          <div className="mt-6 grid gap-5">
-            <div className="rounded-2xl border border-dashed border-[rgba(30,27,22,0.2)] bg-white/60 px-4 py-4">
-              <p className="text-sm text-muted">Fastest option</p>
-              {hasGoogleClientId ? (
-                <div className="mt-3 flex justify-center" ref={googleButtonRef} />
-              ) : (
-                <p className="mt-3 text-sm text-muted">
-                  Google sign-in needs a valid client ID ending in{' '}
-                  <span className="font-semibold">.apps.googleusercontent.com</span>.
-                </p>
-              )}
-            </div>
+      {stage === 'email' ? (
+        <div className="mt-6 grid gap-5">
+          {googleBlock('Fastest option')}
 
-            <div className="flex items-center gap-3 text-xs uppercase tracking-[0.2em] text-muted">
-              <span className="h-px flex-1 bg-[rgba(30,27,22,0.12)]" />
-              <span>or</span>
-              <span className="h-px flex-1 bg-[rgba(30,27,22,0.12)]" />
-            </div>
+          <div className="flex items-center gap-3 text-[10px] uppercase tracking-[0.2em] text-ink/[0.5]">
+            <span className="h-px flex-1 bg-ink/[0.16]" />
+            <span>or</span>
+            <span className="h-px flex-1 bg-ink/[0.16]" />
+          </div>
 
-            <form className="grid gap-4" onSubmit={handleEmailContinue}>
-              <label className="flex flex-col gap-1 text-sm">
-                <span className="font-semibold">Email address</span>
+          <form className="grid gap-4" onSubmit={handleEmailContinue}>
+            <label className="grid gap-2">
+              <span className="text-[10px] uppercase tracking-[0.16em] text-accent">
+                Email address
+              </span>
+              <input
+                className={fieldClass}
+                type="email"
+                value={email}
+                autoComplete="email"
+                onChange={(e) => setEmail(e.currentTarget.value)}
+                required
+              />
+            </label>
+            <Button type="submit" size="lg" block disabled={isFetching || !email.trim()}>
+              {isFetching ? 'Checking…' : 'Continue'}
+            </Button>
+          </form>
+        </div>
+      ) : (
+        <div className="mt-6 grid gap-5">
+          {emailRow}
+
+          {stage === 'password' ? (
+            <form className="grid gap-4" onSubmit={handlePasswordSubmit}>
+              <label className="grid gap-2">
+                <span className="text-[10px] uppercase tracking-[0.16em] text-accent">
+                  Password
+                </span>
                 <input
-                  className={inputClass}
-                  type="email"
-                  value={email}
-                  autoComplete="email"
-                  onChange={(e) => setEmail(e.currentTarget.value)}
+                  className={fieldClass}
+                  type="password"
+                  value={password}
+                  autoComplete={hasAccount ? 'current-password' : 'new-password'}
+                  onChange={(e) => setPassword(e.currentTarget.value)}
                   required
                 />
               </label>
-              <Button type="submit" disabled={isFetching || !email.trim()}>
-                {isFetching ? <Loader label="Checking..." tone="light" /> : 'Continue'}
+              <Button type="submit" size="lg" block disabled={isSubmitting}>
+                {isSubmitting ? 'Working…' : actionLabel}
               </Button>
+              <div className="flex flex-wrap items-center gap-3 text-[14px] text-ink/[0.65]">
+                <span>
+                  {hasAccount ? 'Prefer a code instead?' : 'Prefer not to set a password?'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStage('code');
+                    setStatus(null);
+                    setEmailCode('');
+                    setCodeSent(false);
+                  }}
+                  className="min-h-[44px] cursor-pointer text-accent"
+                >
+                  Use email code
+                </button>
+              </div>
             </form>
-          </div>
-        ) : (
-          <div className="mt-6 grid gap-5">
-            <div className="flex items-center justify-between rounded-xl border border-[rgba(30,27,22,0.12)] bg-white/70 px-3 py-2 text-sm">
-              <span className="font-semibold text-ink">{email}</span>
-              <Button
-                variant="link"
-                size="link"
-                radius="none"
-                className="text-xs uppercase tracking-[0.12em]"
-                onClick={() => {
-                  setStage('email');
-                  setMethods(null);
-                  setStatus(null);
-                  setPassword('');
-                  setEmailCode('');
-                  setCodeSent(false);
-                }}
-              >
-                Change
-              </Button>
-            </div>
-
-            {stage === 'password' ? (
-              <form className="grid gap-4" onSubmit={handlePasswordSubmit}>
-                <label className="flex flex-col gap-1 text-sm">
-                  <span className="font-semibold">Password</span>
-                  <input
-                    className={inputClass}
-                    type="password"
-                    value={password}
-                    autoComplete={hasAccount ? 'current-password' : 'new-password'}
-                    onChange={(e) => setPassword(e.currentTarget.value)}
-                    required
-                  />
-                </label>
-                <Button type="submit" disabled={isSubmitting}>
-                  {isSubmitting ? <Loader label="Working..." tone="light" /> : actionLabel}
+          ) : (
+            <form className="grid gap-4" onSubmit={handleCodeVerify}>
+              {!codeSent ? (
+                <Button
+                  type="button"
+                  size="lg"
+                  block
+                  onClick={handleCodeRequest}
+                  disabled={isSubmitting}
+                >
+                  {isSubmitting ? 'Sending…' : 'Send code'}
                 </Button>
-                <div className="flex flex-wrap items-center gap-3 text-sm text-muted">
-                  <span>
-                    {hasAccount ? 'Prefer a code instead?' : 'Prefer not to set a password?'}
-                  </span>
+              ) : (
+                <>
+                  <label className="grid gap-2">
+                    <span className="text-[10px] uppercase tracking-[0.16em] text-accent">
+                      Enter code
+                    </span>
+                    <input
+                      className={`${fieldClass} tabular text-[22px] tracking-[0.34em]`}
+                      value={emailCode}
+                      onChange={(e) => setEmailCode(e.currentTarget.value)}
+                      inputMode="numeric"
+                      required
+                    />
+                  </label>
                   <Button
-                    variant="link"
-                    size="link"
-                    radius="none"
-                    onClick={() => {
-                      setStage('code');
-                      setStatus(null);
-                      setEmailCode('');
-                      setCodeSent(false);
-                    }}
+                    type="submit"
+                    size="lg"
+                    block
+                    disabled={isSubmitting || !emailCode.trim()}
                   >
-                    Use email code
+                    {isSubmitting ? 'Verifying…' : 'Verify code'}
                   </Button>
-                </div>
-              </form>
-            ) : (
-              <form className="grid gap-4" onSubmit={handleCodeVerify}>
-                {!codeSent ? (
-                  <Button type="button" onClick={handleCodeRequest} disabled={isSubmitting}>
-                    {isSubmitting ? <Loader label="Sending..." tone="light" /> : 'Send code'}
-                  </Button>
-                ) : (
-                  <>
-                    <label className="flex flex-col gap-1 text-sm">
-                      <span className="font-semibold">Enter code</span>
-                      <input
-                        className={inputClass}
-                        value={emailCode}
-                        onChange={(e) => setEmailCode(e.currentTarget.value)}
-                        inputMode="numeric"
-                        required
-                      />
-                    </label>
-                    <Button type="submit" disabled={isSubmitting || !emailCode.trim()}>
-                      {isSubmitting ? <Loader label="Verifying..." tone="light" /> : 'Verify code'}
-                    </Button>
-                    <Button
-                      variant="link"
-                      size="link"
-                      radius="none"
-                      className="text-left"
+                  <div className="flex flex-wrap items-center gap-5 text-[14px]">
+                    <button
+                      type="button"
                       onClick={handleCodeRequest}
                       disabled={isSubmitting}
+                      className="min-h-[44px] cursor-pointer text-accent disabled:opacity-45"
                     >
                       Resend code
-                    </Button>
-                  </>
-                )}
-
-                {showPasswordOption ? (
-                  <div className="flex flex-wrap items-center gap-3 text-sm text-muted">
-                    <span>Want to use a password instead?</span>
-                    <Button
-                      variant="link"
-                      size="link"
-                      radius="none"
-                      onClick={() => {
-                        setStage('password');
-                        setStatus(null);
-                        setPassword('');
-                      }}
-                    >
-                      Use password
-                    </Button>
+                    </button>
+                    {showPasswordOption ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setStage('password');
+                          setStatus(null);
+                          setPassword('');
+                        }}
+                        className="min-h-[44px] cursor-pointer text-accent"
+                      >
+                        Use password
+                      </button>
+                    ) : null}
                   </div>
-                ) : null}
-              </form>
-            )}
+                </>
+              )}
+            </form>
+          )}
 
-            {hasGoogleClientId ? (
-              <div className="rounded-2xl border border-dashed border-[rgba(30,27,22,0.2)] bg-white/60 px-4 py-4">
-                <p className="text-sm text-muted">
-                  {methods?.methods.google
-                    ? 'Google is linked to this email.'
-                    : 'Prefer a one-tap sign-in?'}
-                </p>
-                <div className="mt-3 flex justify-center" ref={googleButtonRef} />
-              </div>
-            ) : null}
-          </div>
-        )}
-      </div>
-    </div>
+          {googleBlock(
+            methods?.methods.google
+              ? 'Google is linked to this email.'
+              : 'Prefer a one-tap sign-in?'
+          )}
+        </div>
+      )}
+    </Sheet>
   );
 }

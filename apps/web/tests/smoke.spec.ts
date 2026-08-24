@@ -340,46 +340,102 @@ async function mockApi(page: Page, overrides: ApiOverrides = {}) {
   });
 }
 
-test("renders the home view with today's word", async ({ page }) => {
+test('the stream opens on today\'s word with nothing above it', async ({ page }) => {
   await mockApi(page);
   await page.goto('/');
+
+  // Nothing sits above today's word but the wordmark and the date rule — no
+  // tagline, no banner, no card.
   await expect(page.getByText('Lexi', { exact: true })).toBeVisible();
-  await expect(page.getByText("Today's word")).toBeVisible();
   await expect(page.getByRole('heading', { name: defaultTodayWord.word })).toBeVisible();
   await expect(page.getByText(defaultTodayWord.details.meanings[0].definitions[0])).toBeVisible();
+  await expect(page.getByText('Daily rituals, kept simple.')).toHaveCount(0);
+  await expect(page.getByText('Turn on notifications to receive your word')).toHaveCount(0);
+
+  // Two destinations, and the archive continues the same scroll surface.
+  const nav = page.getByRole('navigation', { name: 'Main' });
+  await expect(nav.getByRole('button', { name: 'Words' })).toBeVisible();
+  await expect(nav.getByRole('button', { name: 'You' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'History' })).toHaveCount(0);
 });
 
-test('shows collapsible history entries', async ({ page }) => {
+test('an archive entry expands in place, without accordion chrome', async ({ page }) => {
   await mockApi(page);
-  await page.goto('/history');
-  await expect(page.getByText('History')).toBeVisible();
+  await page.goto('/');
 
-  const details = page.locator('details').first();
-  const summary = details.locator('summary');
-  await expect(details.locator('text=Etymology')).toBeHidden();
-  await summary.click();
-  await expect(details.locator('text=Etymology')).toBeVisible();
+  // The archive is part of the stream now, not a separate route.
+  const entry = page.getByRole('button', { name: /sonder/ });
+  await expect(entry).toBeVisible();
+  await expect(page.locator('details')).toHaveCount(0);
+
+  // A definition appears once per entry — the old grid printed it twice.
+  await entry.click();
+  await expect(page.getByRole('heading', { name: 'sonder' })).toBeVisible();
+  await expect(
+    page.getByText('The realization that each passerby has a life as vivid as your own.')
+  ).toHaveCount(1);
 });
 
-test('saves updated delivery time in settings', async ({ page }) => {
+test('the delivery time is chosen from presets on a sheet', async ({ page }) => {
   await mockApi(page);
-  await page.goto('/settings');
+  await page.goto('/you');
 
-  const timeInput = page.getByLabel('Delivery time');
-  await timeInput.fill('10:30');
+  // Settings and Account merged into You; the streak is stated once, here.
+  await expect(page.getByRole('heading', { name: 'You' })).toBeVisible();
+  await expect(page.getByText('Words kept')).toBeVisible();
+
+  await page.getByRole('button', { name: /Delivery time/ }).click();
+
+  // Presets rather than a time wheel.
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await expect(page.getByText('Your daily word')).toBeVisible();
+  await page.getByText('13:00').click();
 
   const requestPromise = page.waitForRequest(
     (req) => req.url().endsWith('/api/settings') && req.method() === 'PUT'
   );
-  await page.getByRole('button', { name: 'Save settings' }).click();
+  await page.getByRole('button', { name: 'Turn on' }).click();
   const request = await requestPromise;
-  const payload = request.postDataJSON() as {
-    delivery_time: string;
-    word_filters?: { difficulty?: string };
-  };
-  expect(payload.delivery_time).toBe('10:30');
-  expect(payload.word_filters?.difficulty).toBe('balanced');
-  await expect(page.getByText('Saved. Changes apply next day.')).toBeVisible();
+  expect((request.postDataJSON() as { delivery_time: string }).delivery_time).toBe('13:00');
+});
+
+test('enabling from the sheet keeps the time that was just chosen', async ({ page }) => {
+  // A saved schedule that differs from the 09:00 fallback, so a draft seeded
+  // before settings load would be visibly wrong.
+  await mockApi(page, {
+    settings: {
+      schedule: { enabled: false, delivery_time: '21:00', timezone: 'America/New_York' },
+      preferences: {
+        version: 1,
+        notification_enabled: false,
+        delivery_time: '21:00',
+        word_filters: { difficulty: 'balanced' },
+      },
+    },
+  });
+
+  const puts: Array<{ enabled: boolean; delivery_time: string }> = [];
+  page.on('request', (request) => {
+    if (request.url().endsWith('/api/settings') && request.method() === 'PUT') {
+      puts.push(request.postDataJSON() as { enabled: boolean; delivery_time: string });
+    }
+  });
+
+  await page.goto('/you');
+  await expect(page.getByRole('button', { name: /21:00/ })).toBeVisible();
+  await page.getByRole('button', { name: /Delivery time/ }).click();
+  await page.getByText('07:00').click();
+  await page.getByRole('button', { name: 'Turn on' }).click();
+
+  // The user-visible regression: a save could persist the delivery time this
+  // render had captured — the old 21:00 — over the 07:00 just chosen. No write
+  // may carry the stale value.
+  await expect.poll(() => puts.length).toBeGreaterThan(0);
+  expect(puts.every((put) => put.delivery_time === '07:00')).toBe(true);
+
+  // Not asserted here: that it is a *single* write, and that `enabled` lands
+  // true. Both depend on the push handshake completing, which needs a service
+  // worker and a granted notification permission this suite withholds.
 });
 
 test('redirects non-admins away from the admin route', async ({ page }) => {
@@ -397,7 +453,7 @@ test('redirects non-admins away from the admin route', async ({ page }) => {
   // through the auth sheet, and anyone without the admin flag is sent back to
   // the daily word rather than shown a page they cannot use.
   await expect(page).toHaveURL(/\/$/);
-  await expect(page.getByText("Today's word")).toBeVisible();
+  await expect(page.getByRole('heading', { name: defaultTodayWord.word })).toBeVisible();
 });
 
 test('opens the admin on Overview, with every figure answering a question', async ({ page }) => {
@@ -509,7 +565,7 @@ test('review rejects only once a note is entered', async ({ page }) => {
   await expect(reject).toBeEnabled();
 });
 
-test('anonymous users can reach settings from the main nav', async ({ page }) => {
+test('anonymous readers can reach their settings from the tab bar', async ({ page }) => {
   await mockApi(page, {
     me: {
       user_id: 'anon-user',
@@ -520,23 +576,35 @@ test('anonymous users can reach settings from the main nav', async ({ page }) =>
   });
   await page.goto('/');
 
-  // The nav must expose Settings without an account: notification delivery is
-  // the whole product, and anonymous use is a supported mode.
-  const settingsLink = page.getByRole('link', { name: 'Settings' });
-  await expect(settingsLink).toBeVisible();
+  // Notification delivery is the whole product and anonymous use is supported,
+  // so the schedule must be reachable without an account.
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'You' }).click();
+  await expect(page.getByRole('heading', { name: 'You' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Delivery time/ })).toBeVisible();
 
-  await settingsLink.click();
-  await expect(page.getByLabel('Delivery time')).toBeVisible();
+  // The sync upsell lives here and nowhere else.
+  await expect(page.getByRole('button', { name: 'Sign in to sync' })).toBeVisible();
 });
 
-test('the home reminder banner links to settings', async ({ page }) => {
+test('notification setup is offered on day one, not as a daily banner', async ({ page }) => {
+  // A first visit has no archive behind it.
+  await mockApi(page, { history: [] });
+  await page.goto('/');
+
+  await expect(page.getByText('This is the whole app')).toBeVisible();
+  await page.getByRole('button', { name: 'Choose a delivery time' }).click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await expect(page.getByText('Your daily word')).toBeVisible();
+});
+
+test('the daily reading carries no banner once the stream has history', async ({ page }) => {
   await mockApi(page);
   await page.goto('/');
 
-  const bannerLink = page.getByRole('link', { name: 'Open settings' });
-  await expect(bannerLink).toBeVisible();
-  await bannerLink.click();
-  await expect(page.getByLabel('Delivery time')).toBeVisible();
+  // One prompt, once: nothing re-asks on every daily word.
+  await expect(page.getByText('This is the whole app')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Choose a delivery time' })).toHaveCount(0);
+  await expect(page.getByText('Turn on notifications')).toHaveCount(0);
 });
 
 test('adding a word writes to the pool the app actually reads', async ({ page }) => {
