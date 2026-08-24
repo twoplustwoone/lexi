@@ -3,6 +3,7 @@ import { Search } from 'lucide-react';
 import { route } from 'preact-router';
 
 import { fetchTodayWord, markWordViewed, syncHistoryCache } from '../api';
+import { useSchedule } from '../useSchedule';
 import { Button } from '../components/Button';
 import { DateRule } from '../components/reader/DateRule';
 import { DeliveryTimeSheet } from '../components/reader/DeliveryTimeSheet';
@@ -29,25 +30,65 @@ export function Words(_props: { path?: string }) {
   const [error, setError] = useState<string | null>(null);
   const [deliverySheetOpen, setDeliverySheetOpen] = useState(false);
   const [stickyMonth, setStickyMonth] = useState<MonthGroup | null>(null);
+  const schedule = useSchedule(null);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const monthRefs = useRef(new Map<string, HTMLDivElement>());
 
   useEffect(() => {
+    let cancelled = false;
+
+    const toEntry = (payload: {
+      wordPoolId: number;
+      word: string;
+      day: string;
+      details: StreamEntry['details'];
+      detailsStatus: StreamEntry['detailsStatus'];
+    }): StreamEntry => ({
+      wordId: payload.wordPoolId,
+      word: payload.word,
+      date: payload.day,
+      kicker: '',
+      details: payload.details,
+      detailsStatus: payload.detailsStatus,
+    });
+
+    /**
+     * Enrichment can still be running when the word is served. Poll until the
+     * card lands, so a pending word resolves in place rather than sitting on
+     * "Looking up the definition" until the next remount.
+     */
+    const pollWhilePending = async () => {
+      for (let attempt = 0; attempt < 20 && !cancelled; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        if (cancelled) return;
+        try {
+          const updated = await fetchTodayWord();
+          if (cancelled) return;
+          if (updated.detailsStatus !== 'pending') {
+            const entry = toEntry(updated);
+            setToday(entry);
+            cachedToday = entry;
+            return;
+          }
+        } catch {
+          return; // Stop polling rather than hammering a failing endpoint.
+        }
+      }
+    };
+
     const load = async () => {
+      let served = false;
       try {
         const payload = await fetchTodayWord();
-        const entry: StreamEntry = {
-          wordId: payload.wordPoolId,
-          word: payload.word,
-          date: payload.day,
-          kicker: '',
-          details: payload.details,
-          detailsStatus: payload.detailsStatus,
-        };
+        const entry = toEntry(payload);
         setToday(entry);
         cachedToday = entry;
+        served = true;
         void markWordViewed(payload.wordPoolId).catch(() => undefined);
+        if (payload.detailsStatus === 'pending') {
+          void pollWhilePending();
+        }
       } catch (err) {
         if (!cachedToday) {
           setError(err instanceof Error ? err.message : 'Could not load today’s word.');
@@ -59,11 +100,27 @@ export function Words(_props: { path?: string }) {
       // Offline renders identically to ready — cached words are not marked.
       await syncHistoryCache().catch(() => undefined);
       const history = await getHistory().catch(() => []);
+      if (cancelled) return;
       const entries = sortNewestFirst(history.map(toStreamEntry));
+
+      // A cold offline launch has no cached word, so the newest stored entry
+      // stands in as today's reading rather than appearing only as a dimmed
+      // archive row.
+      if (!served && !cachedToday && entries.length > 0) {
+        const latest = entries[0];
+        setToday(latest);
+        cachedToday = latest;
+        setError(null);
+      }
+
       setArchive(entries);
       cachedArchive = entries;
     };
+
     void load();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Today's word arrives through /word/today, and also lands in history once
@@ -233,7 +290,11 @@ export function Words(_props: { path?: string }) {
         ) : null}
       </div>
 
-      <DeliveryTimeSheet open={deliverySheetOpen} onClose={() => setDeliverySheetOpen(false)} />
+      <DeliveryTimeSheet
+        open={deliverySheetOpen}
+        onClose={() => setDeliverySheetOpen(false)}
+        schedule={schedule}
+      />
     </div>
   );
 }

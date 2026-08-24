@@ -1,8 +1,8 @@
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 
 import { Button } from '../Button';
 import { Sheet, SheetRadioRow } from './Sheet';
-import { useSchedule } from '../../useSchedule';
+import type { ScheduleController } from '../../useSchedule';
 
 /**
  * Presets rather than a time wheel — faster on a phone, and "Another time"
@@ -19,26 +19,32 @@ const PRESETS = [
 export function DeliveryTimeSheet({
   open,
   onClose,
-  userId = null,
+  schedule,
 }: {
   open: boolean;
   onClose: () => void;
-  userId?: string | null;
+  /** Owned by the screen, so the sheet and the rows it sits over agree. */
+  schedule: ScheduleController;
 }) {
-  const schedule = useSchedule(userId);
   const [choice, setChoice] = useState<string>(schedule.deliveryTime);
   const [custom, setCustom] = useState(schedule.deliveryTime);
+
+  // Settings arrive after the first paint, so a draft seeded once at mount
+  // would sit on the 09:00 fallback and quietly overwrite a real schedule on
+  // confirm. Re-seed whenever the sheet opens or the saved time changes.
+  useEffect(() => {
+    if (!open) return;
+    setChoice(schedule.deliveryTime);
+    setCustom(schedule.deliveryTime);
+  }, [open, schedule.deliveryTime]);
 
   const isPreset = PRESETS.some((preset) => preset.time === choice);
   const chosenTime = isPreset ? choice : custom;
 
   const handleConfirm = async () => {
-    await schedule.setDeliveryTime(chosenTime);
-    // Turning it on is the point of this sheet; the time alone does nothing
-    // if notifications are off.
-    if (!schedule.enabled) {
-      await schedule.setEnabled(true);
-    }
+    // One write. Saving the time and then enabling separately meant the second
+    // call re-sent the delivery time this render had captured — the old one.
+    await schedule.save({ deliveryTime: chosenTime, enabled: true });
     onClose();
   };
 

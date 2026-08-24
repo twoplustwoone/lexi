@@ -399,6 +399,45 @@ test('the delivery time is chosen from presets on a sheet', async ({ page }) => 
   expect((request.postDataJSON() as { delivery_time: string }).delivery_time).toBe('13:00');
 });
 
+test('enabling from the sheet keeps the time that was just chosen', async ({ page }) => {
+  // A saved schedule that differs from the 09:00 fallback, so a draft seeded
+  // before settings load would be visibly wrong.
+  await mockApi(page, {
+    settings: {
+      schedule: { enabled: false, delivery_time: '21:00', timezone: 'America/New_York' },
+      preferences: {
+        version: 1,
+        notification_enabled: false,
+        delivery_time: '21:00',
+        word_filters: { difficulty: 'balanced' },
+      },
+    },
+  });
+
+  const puts: Array<{ enabled: boolean; delivery_time: string }> = [];
+  page.on('request', (request) => {
+    if (request.url().endsWith('/api/settings') && request.method() === 'PUT') {
+      puts.push(request.postDataJSON() as { enabled: boolean; delivery_time: string });
+    }
+  });
+
+  await page.goto('/you');
+  await expect(page.getByRole('button', { name: /21:00/ })).toBeVisible();
+  await page.getByRole('button', { name: /Delivery time/ }).click();
+  await page.getByText('07:00').click();
+  await page.getByRole('button', { name: 'Turn on' }).click();
+
+  // The user-visible regression: a save could persist the delivery time this
+  // render had captured — the old 21:00 — over the 07:00 just chosen. No write
+  // may carry the stale value.
+  await expect.poll(() => puts.length).toBeGreaterThan(0);
+  expect(puts.every((put) => put.delivery_time === '07:00')).toBe(true);
+
+  // Not asserted here: that it is a *single* write, and that `enabled` lands
+  // true. Both depend on the push handshake completing, which needs a service
+  // worker and a granted notification permission this suite withholds.
+});
+
 test('redirects non-admins away from the admin route', async ({ page }) => {
   await mockApi(page, {
     me: {

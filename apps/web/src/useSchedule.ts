@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { isThirtyMinuteTime, type WordDifficulty } from '@word-of-the-day/shared';
 
 import {
@@ -51,6 +51,12 @@ function errorMessage(error: unknown, fallback: string) {
 
 let cachedSettings: SettingsState | null = null;
 
+export interface SchedulePatch {
+  enabled?: boolean;
+  deliveryTime?: string;
+  difficulty?: WordDifficulty;
+}
+
 export interface ScheduleController {
   enabled: boolean;
   deliveryTime: string;
@@ -61,9 +67,13 @@ export interface ScheduleController {
   message: string | null;
   supportsPush: boolean;
   setMessage: (message: string | null) => void;
-  /** Turns notifications on or off, running the whole push handshake. */
+  /**
+   * One atomic write. Everything else routes through it, because two
+   * sequential saves from the same render read stale closure state — the
+   * second would re-send the value the first had just replaced.
+   */
+  save: (patch: SchedulePatch) => Promise<void>;
   setEnabled: (next: boolean) => Promise<void>;
-  /** Applies from tomorrow, as the sheet says. */
   setDeliveryTime: (next: string) => Promise<void>;
   setDifficulty: (next: WordDifficulty) => Promise<void>;
 }
@@ -86,12 +96,22 @@ export function useSchedule(userId: string | null): ScheduleController {
   const supportsPush =
     'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 
+  // save() reads this rather than its own closure, so two writes in the same
+  // render still compose instead of clobbering one another.
+  const latest = useRef({ enabled, deliveryTime, difficulty });
+  latest.current = { enabled, deliveryTime, difficulty };
+
   const apply = (settings: SettingsState) => {
     cachedSettings = settings;
     setEnabledState(settings.schedule.enabled);
     setDeliveryTimeState(settings.schedule.delivery_time);
     setDifficultyState(settings.preferences.word_filters?.difficulty ?? 'balanced');
     setTimezone(settings.schedule.timezone);
+    latest.current = {
+      enabled: settings.schedule.enabled,
+      deliveryTime: settings.schedule.delivery_time,
+      difficulty: settings.preferences.word_filters?.difficulty ?? 'balanced',
+    };
   };
 
   useEffect(() => {
@@ -108,110 +128,95 @@ export function useSchedule(userId: string | null): ScheduleController {
     void load();
   }, []);
 
-  const persist = async (next: {
-    enabled: boolean;
-    delivery_time: string;
-    difficulty: WordDifficulty;
-  }) => {
-    await updateSettingsRemote({
-      enabled: next.enabled,
-      delivery_time: next.delivery_time,
-      timezone,
-      word_filters: { difficulty: next.difficulty },
+  /** Runs the push handshake. Returns false if the user declined. */
+  const enablePush = async (): Promise<boolean> => {
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') {
+      setMessage('Notification permission was denied.');
+      return false;
+    }
+
+    await trackEvent({
+      event_name: 'notification_permission_granted',
+      timestamp: new Date().toISOString(),
+      user_id: userId || getAnonymousId(),
+      client: getClientType(),
     });
-    apply(await syncSettingsCache());
+
+    const registration = await navigator.serviceWorker.ready;
+    let subscription = await registration.pushManager.getSubscription();
+    if (!subscription) {
+      const key = getValidatedVapidKey(await fetchVapidKey());
+      subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: key as unknown as BufferSource,
+      });
+    }
+    await subscribePush(subscription.toJSON());
+    await trackEvent({
+      event_name: 'notification_enabled',
+      timestamp: new Date().toISOString(),
+      user_id: userId || getAnonymousId(),
+      client: getClientType(),
+    });
+    return true;
   };
 
-  const setEnabled = async (next: boolean) => {
+  const disablePush = async () => {
+    if (!supportsPush) return;
+    const registration = await navigator.serviceWorker.ready;
+    const subscription = await registration.pushManager.getSubscription();
+    if (subscription) {
+      await unsubscribePush(subscription.endpoint);
+      await subscription.unsubscribe();
+    }
+  };
+
+  const save = async (patch: SchedulePatch) => {
     setMessage(null);
-    if (next && !supportsPush) {
+    const next = { ...latest.current, ...patch };
+
+    if (next.enabled && !supportsPush) {
       setMessage('This device cannot receive push notifications.');
       return;
     }
-    if (!isThirtyMinuteTime(deliveryTime)) {
+    if (!isThirtyMinuteTime(next.deliveryTime)) {
       setMessage('Delivery time must be in 30-minute increments.');
       return;
     }
 
+    const turningOn = next.enabled && !latest.current.enabled;
+    const turningOff = !next.enabled && latest.current.enabled;
+
     setBusy(true);
     try {
-      if (next) {
-        const permission = await Notification.requestPermission();
-        if (permission !== 'granted') {
-          setMessage('Notification permission was denied.');
-          await persist({ enabled: false, delivery_time: deliveryTime, difficulty });
-          return;
+      if (turningOn) {
+        let granted = false;
+        try {
+          granted = await enablePush();
+        } catch (error) {
+          setMessage(errorMessage(error, 'Push setup failed. Check VAPID keys.'));
+          granted = false;
         }
-
-        await trackEvent({
-          event_name: 'notification_permission_granted',
-          timestamp: new Date().toISOString(),
-          user_id: userId || getAnonymousId(),
-          client: getClientType(),
-        });
-
-        const registration = await navigator.serviceWorker.ready;
-        let subscription = await registration.pushManager.getSubscription();
-        if (!subscription) {
-          let key: Uint8Array;
-          try {
-            key = getValidatedVapidKey(await fetchVapidKey());
-          } catch (error) {
-            setMessage(errorMessage(error, 'Push setup failed. Check VAPID keys.'));
-            return;
-          }
-          subscription = await registration.pushManager.subscribe({
-            userVisibleOnly: true,
-            applicationServerKey: key as unknown as BufferSource,
-          });
+        if (!granted) {
+          next.enabled = false;
         }
-        await subscribePush(subscription.toJSON());
-        await trackEvent({
-          event_name: 'notification_enabled',
-          timestamp: new Date().toISOString(),
-          user_id: userId || getAnonymousId(),
-          client: getClientType(),
-        });
-      } else if (supportsPush) {
-        const registration = await navigator.serviceWorker.ready;
-        const subscription = await registration.pushManager.getSubscription();
-        if (subscription) {
-          await unsubscribePush(subscription.endpoint);
-          await subscription.unsubscribe();
-        }
+      } else if (turningOff) {
+        await disablePush();
       }
 
-      await persist({ enabled: next, delivery_time: deliveryTime, difficulty });
+      await updateSettingsRemote({
+        enabled: next.enabled,
+        delivery_time: next.deliveryTime,
+        // The timezone selector went with the redesign, and the sheet promises
+        // delivery in local time — so the device is the source of truth. A
+        // stored zone from before a move would otherwise keep scheduling in it.
+        timezone: getTimeZone(),
+        word_filters: { difficulty: next.difficulty },
+      });
+      apply(await syncSettingsCache());
     } catch (error) {
-      setMessage(errorMessage(error, 'Unable to update notifications.'));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const setDeliveryTime = async (next: string) => {
-    setMessage(null);
-    if (!isThirtyMinuteTime(next)) {
-      setMessage('Delivery time must be in 30-minute increments.');
-      return;
-    }
-    setBusy(true);
-    try {
-      await persist({ enabled, delivery_time: next, difficulty });
-    } catch (error) {
-      setMessage(errorMessage(error, 'Unable to save the delivery time.'));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const setDifficulty = async (next: WordDifficulty) => {
-    setMessage(null);
-    setBusy(true);
-    try {
-      await persist({ enabled, delivery_time: deliveryTime, difficulty: next });
-    } catch (error) {
-      setMessage(errorMessage(error, 'Unable to save the difficulty.'));
+      setMessage(errorMessage(error, 'Unable to save your settings.'));
     } finally {
       setBusy(false);
     }
@@ -227,8 +232,9 @@ export function useSchedule(userId: string | null): ScheduleController {
     message,
     supportsPush,
     setMessage,
-    setEnabled,
-    setDeliveryTime,
-    setDifficulty,
+    save,
+    setEnabled: (next) => save({ enabled: next }),
+    setDeliveryTime: (next) => save({ deliveryTime: next }),
+    setDifficulty: (next) => save({ difficulty: next }),
   };
 }

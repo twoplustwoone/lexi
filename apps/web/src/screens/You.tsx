@@ -7,8 +7,8 @@ import { logout, resetAnonymousIdentity } from '../api';
 import { Button } from '../components/Button';
 import { DeliveryTimeSheet } from '../components/reader/DeliveryTimeSheet';
 import { SectionLabel, SettingRow, Segmented } from '../components/reader/SettingRow';
-import { StreamEntry, sortNewestFirst, toStreamEntry } from '../components/reader/stream';
-import { getHistory } from '../storage';
+import { StreamEntry } from '../components/reader/stream';
+import { useStreamHistory } from '../components/reader/useStreamHistory';
 import { useSchedule } from '../useSchedule';
 
 interface YouProps {
@@ -59,15 +59,9 @@ const DIFFICULTIES: Array<{ value: WordDifficulty; label: string }> = [
  */
 export function You({ user, onOpenAuth, onUserChange }: YouProps) {
   const schedule = useSchedule(user.userId);
-  const [entries, setEntries] = useState<StreamEntry[]>([]);
+  const { entries } = useStreamHistory();
   const [sheetOpen, setSheetOpen] = useState(false);
   const [installPrompt, setInstallPrompt] = useState<Event | null>(null);
-
-  useEffect(() => {
-    void getHistory()
-      .then((history) => setEntries(sortNewestFirst(history.map(toStreamEntry))))
-      .catch(() => undefined);
-  }, []);
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -209,11 +203,7 @@ export function You({ user, onOpenAuth, onUserChange }: YouProps) {
         <div className="h-8" />
       </div>
 
-      <DeliveryTimeSheet
-        open={sheetOpen}
-        onClose={() => setSheetOpen(false)}
-        userId={user.userId}
-      />
+      <DeliveryTimeSheet open={sheetOpen} onClose={() => setSheetOpen(false)} schedule={schedule} />
     </div>
   );
 }

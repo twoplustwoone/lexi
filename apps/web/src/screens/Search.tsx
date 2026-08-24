@@ -3,14 +3,8 @@ import { route } from 'preact-router';
 
 import { ResultCount, ResultRow, SearchField } from '../components/reader/SearchField';
 import { Tag } from '../components/reader/SettingRow';
-import {
-  StreamEntry,
-  formatShortKicker,
-  matches,
-  sortNewestFirst,
-  toStreamEntry,
-} from '../components/reader/stream';
-import { getHistory } from '../storage';
+import { formatShortKicker, matches } from '../components/reader/stream';
+import { useStreamHistory } from '../components/reader/useStreamHistory';
 
 /**
  * Full screen. Substring match on the word and its definition, so `quie` finds
@@ -20,13 +14,7 @@ import { getHistory } from '../storage';
 export function Search(_props: { path?: string }) {
   const [query, setQuery] = useState('');
   const [debounced, setDebounced] = useState('');
-  const [entries, setEntries] = useState<StreamEntry[]>([]);
-
-  useEffect(() => {
-    void getHistory()
-      .then((history) => setEntries(sortNewestFirst(history.map(toStreamEntry))))
-      .catch(() => undefined);
-  }, []);
+  const { entries } = useStreamHistory();
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebounced(query), 160);

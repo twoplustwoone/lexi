@@ -1,18 +1,11 @@
-import { useEffect, useState } from 'preact/hooks';
 import { ArrowLeft, ArrowRight } from 'lucide-react';
 import { route } from 'preact-router';
 
 import { DateRule } from '../components/reader/DateRule';
 import { Tag } from '../components/reader/SettingRow';
 import { WordEntryFull } from '../components/reader/WordEntry';
-import {
-  StreamEntry,
-  dayNumber,
-  formatKicker,
-  sortNewestFirst,
-  toStreamEntry,
-} from '../components/reader/stream';
-import { getHistory } from '../storage';
+import { dayNumber, formatKicker } from '../components/reader/stream';
+import { useStreamHistory } from '../components/reader/useStreamHistory';
 
 interface WordDetailProps {
   path?: string;
@@ -24,20 +17,8 @@ interface WordDetailProps {
  * up is not less important than today's.
  */
 export function WordDetail({ id }: WordDetailProps) {
-  const [entry, setEntry] = useState<StreamEntry | null>(null);
-  const [all, setAll] = useState<StreamEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    void getHistory()
-      .then((history) => {
-        const entries = sortNewestFirst(history.map(toStreamEntry));
-        setAll(entries);
-        setEntry(entries.find((candidate) => String(candidate.wordId) === id) ?? null);
-      })
-      .catch(() => undefined)
-      .finally(() => setLoading(false));
-  }, [id]);
+  const { entries: all, loading } = useStreamHistory();
+  const entry = all.find((candidate) => String(candidate.wordId) === id) ?? null;
 
   // The back affordance names where you came from.
   const origin =
