@@ -1,27 +1,40 @@
-import { Bell, Book, Eye, ShieldCheck, Users } from 'lucide-react';
-import { useEffect, useState } from 'preact/hooks';
+import { ComponentChildren } from 'preact';
+import { useCallback, useEffect, useState } from 'preact/hooks';
+import { route } from 'preact-router';
 
 import {
   AdminEventStats,
+  AdminLogEntry,
   AdminStats,
   AdminTimelineStats,
+  AdminUser,
+  DailyWordPayload,
+  WordPoolHealth,
+  WordReviewQueueItem,
   fetchAdminEventStats,
+  fetchAdminLogs,
   fetchAdminStats,
   fetchAdminTimelineStats,
-  fetchMe,
-  logout,
-  resetAnonymousIdentity,
+  fetchAdminUsers,
+  fetchTodayWord,
+  fetchWordPoolHealth,
+  fetchWordReviewQueue,
 } from '../api';
-import { AdminPanel } from '../components/AdminPanel';
-import { Button } from '../components/Button';
-import { AuthMethodsChart } from '../components/dashboard/AuthMethodsChart';
-import { EngagementChart } from '../components/dashboard/EngagementChart';
-import { EventsTimeline } from '../components/dashboard/EventsTimeline';
-import { StatsCard } from '../components/dashboard/StatsCard';
-import { UserGrowthChart } from '../components/dashboard/UserGrowthChart';
-import { WordManagement } from '../components/dashboard/WordManagement';
+import { AdminRail, AdminSidebar, AdminView } from '../components/admin/AdminNav';
+import { Notifications } from '../components/admin/Notifications';
+import { Overview } from '../components/admin/Overview';
+import { People } from '../components/admin/People';
+import { Review } from '../components/admin/Review';
+import { Words } from '../components/admin/Words';
+import { AdminButton, ScreenHeader, Segmented } from '../components/admin/primitives';
 
 type Period = '7d' | '30d' | '90d';
+
+const PERIODS: Array<{ value: Period; label: string }> = [
+  { value: '7d', label: '7 days' },
+  { value: '30d', label: '30 days' },
+  { value: '90d', label: 'All' },
+];
 
 interface AdminProps {
   path?: string;
@@ -40,226 +53,217 @@ interface AdminProps {
   }) => void;
 }
 
-type TabId = 'dashboard' | 'words' | 'users' | 'notifications' | 'logs';
-
-export function Admin({ user, onUserChange }: AdminProps) {
+export function Admin({ user }: AdminProps) {
+  const [view, setView] = useState<AdminView>('overview');
   const [period, setPeriod] = useState<Period>('7d');
-  const [activeTab, setActiveTab] = useState<TabId>('dashboard');
+
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [timeline, setTimeline] = useState<AdminTimelineStats | null>(null);
   const [events, setEvents] = useState<AdminEventStats | null>(null);
+  const [logs, setLogs] = useState<AdminLogEntry[]>([]);
+  const [users, setUsers] = useState<AdminUser[]>([]);
+  const [health, setHealth] = useState<WordPoolHealth | null>(null);
+  const [queue, setQueue] = useState<WordReviewQueueItem[]>([]);
+  const [today, setToday] = useState<DailyWordPayload | null>(null);
+  const [lastSweep, setLastSweep] = useState<{
+    scanned: number;
+    approved: number;
+    flagged: number;
+  } | null>(null);
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [wordsMeta, setWordsMeta] = useState('');
+  const [testRecipients, setTestRecipients] = useState<string[]>([]);
 
-  const refreshUser = async () => {
-    const me = await fetchMe();
-    onUserChange({
-      userId: me.user_id,
-      isAuthenticated: me.is_authenticated,
-      isAnonymous: me.is_anonymous,
-      isAdmin: me.is_admin,
-    });
-    return me;
-  };
+  const loadUsers = useCallback(async () => {
+    const collected: AdminUser[] = [];
+    let cursor: string | null | undefined;
+    let pages = 0;
+    do {
+      const response = await fetchAdminUsers(cursor ?? undefined, 200);
+      collected.push(...response.users);
+      cursor = response.nextCursor;
+      pages += 1;
+      if (!response.users.length) break;
+    } while (cursor && pages < 100);
+    setUsers(collected);
+  }, []);
 
-  const handleLogout = async () => {
-    try {
-      await logout();
-    } catch {
-      // Ignore logout failures
-    }
-    try {
-      await resetAnonymousIdentity();
-    } catch {
-      // Ignore re-registration failures
-    }
-    await refreshUser();
-  };
+  const loadQueue = useCallback(async () => {
+    const response = await fetchWordReviewQueue({ reviewStatus: 'pending_review', limit: 20 });
+    setQueue(response.words);
+  }, []);
 
-  const loadStats = async () => {
+  const loadAll = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [statsData, timelineData, eventsData] = await Promise.all([
+      const [statsData, timelineData, eventsData, logsData, healthData] = await Promise.all([
         fetchAdminStats(),
         fetchAdminTimelineStats(period),
         fetchAdminEventStats(period),
+        fetchAdminLogs({ limit: 200 }),
+        fetchWordPoolHealth(),
       ]);
       setStats(statsData);
       setTimeline(timelineData);
       setEvents(eventsData);
+      setLogs(logsData.logs);
+      setHealth(healthData);
+      await Promise.all([loadUsers(), loadQueue()]);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load stats');
+      setError(err instanceof Error ? err.message : 'Failed to load admin data');
     } finally {
       setLoading(false);
     }
-  };
+  }, [period, loadUsers, loadQueue]);
 
   useEffect(() => {
-    loadStats();
-  }, [period]);
+    void loadAll();
+  }, [loadAll]);
 
-  const cardBase =
-    'rounded-[20px] border border-[rgba(30,27,22,0.12)] bg-card shadow-[0_18px_40px_rgba(29,25,18,0.12)] animate-[fade-up_0.5s_ease_both] motion-reduce:animate-none';
+  // Only the notification composer needs today's word, and only to prefill.
+  useEffect(() => {
+    if (view !== 'notifications' || today) return;
+    void fetchTodayWord()
+      .then(setToday)
+      .catch(() => undefined);
+  }, [view, today]);
 
-  const tabButtonClass = (tab: TabId) =>
-    `px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
-      activeTab === tab
-        ? 'bg-white text-accent-strong shadow-[0_2px_8px_rgba(29,25,18,0.1)]'
-        : 'text-muted hover:text-ink'
-    }`;
+  const handleBackToApp = () => route('/');
+
+  const handleSendTest = (userId: string) => {
+    setTestRecipients([userId]);
+    setView('notifications');
+  };
+
+  const handleQueueChanged = () => {
+    void loadQueue();
+    void fetchWordPoolHealth()
+      .then(setHealth)
+      .catch(() => undefined);
+  };
+
+  const headerFor = (): { title: string; meta?: string; actions?: ComponentChildren } => {
+    switch (view) {
+      case 'overview':
+        return {
+          title: 'Overview',
+          meta: new Date().toLocaleDateString(undefined, {
+            weekday: 'long',
+            day: 'numeric',
+            month: 'long',
+          }),
+          actions: (
+            <Segmented
+              label="Period"
+              options={PERIODS}
+              value={period}
+              onChange={(next) => setPeriod(next)}
+            />
+          ),
+        };
+      case 'review':
+        return {
+          title: 'Review',
+          meta:
+            queue.length > 0
+              ? `${queue.length} ${queue.length === 1 ? 'word' : 'words'} · flagged by the quality gate`
+              : 'Queue clear',
+          actions:
+            queue.length > 0 ? (
+              <AdminButton variant="ghost" onClick={() => setView('overview')}>
+                Skip all, review later
+              </AdminButton>
+            ) : undefined,
+        };
+      case 'words':
+        return { title: 'Words', meta: wordsMeta };
+      case 'notifications':
+        return { title: 'Notifications' };
+      case 'people': {
+        const admins = users.filter((candidate) => candidate.isAdmin).length;
+        return { title: 'People', meta: `${users.length} · ${admins} admins` };
+      }
+    }
+  };
+
+  const header = headerFor();
 
   return (
-    <section className="grid gap-5">
-      {/* Header */}
-      <div className={`${cardBase} p-6`}>
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h2 className="font-[var(--font-display)] text-2xl">Admin Dashboard</h2>
-            <p className="mt-1 text-sm text-muted">Monitor app usage and engagement metrics.</p>
-          </div>
-          <div className="flex items-center gap-3">
-            {/* Period selector */}
-            <div className="flex rounded-lg border border-[rgba(30,27,22,0.1)] bg-surface p-1">
-              {(['7d', '30d', '90d'] as Period[]).map((p) => (
-                <button
-                  key={p}
-                  type="button"
-                  onClick={() => setPeriod(p)}
-                  className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
-                    period === p
-                      ? 'bg-white text-accent-strong shadow-sm'
-                      : 'text-muted hover:text-ink'
-                  }`}
-                >
-                  {p}
-                </button>
-              ))}
-            </div>
-            <Button variant="ghost" size="sm" onClick={loadStats} disabled={loading}>
-              {loading ? 'Loading...' : 'Refresh'}
-            </Button>
-          </div>
+    <div className="flex min-h-screen bg-bg font-body text-ink">
+      <AdminSidebar
+        active={view}
+        onNavigate={setView}
+        queueCount={queue.length}
+        onBackToApp={handleBackToApp}
+      />
+
+      <div className="flex min-w-0 flex-1 flex-col">
+        <AdminRail
+          active={view}
+          onNavigate={setView}
+          queueCount={queue.length}
+          onBackToApp={handleBackToApp}
+        />
+
+        <ScreenHeader title={header.title} meta={header.meta} actions={header.actions} />
+
+        {/* The nav switches this region — nothing renders above it. */}
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-[22px] pb-8 md:px-[34px]">
+          {view === 'overview' ? (
+            <Overview
+              loading={loading}
+              error={error}
+              onRetry={loadAll}
+              stats={stats}
+              timeline={timeline}
+              events={events}
+              logs={logs}
+              users={users}
+              health={health}
+              queueCount={queue.length}
+              onNavigate={setView}
+              onSendTest={handleSendTest}
+            />
+          ) : null}
+
+          {view === 'review' ? (
+            <Review
+              queue={queue}
+              loading={loading}
+              error={error}
+              lastSweep={lastSweep}
+              onSweepComplete={setLastSweep}
+              onQueueChanged={handleQueueChanged}
+              onLeave={() => setView('overview')}
+            />
+          ) : null}
+
+          {view === 'words' ? <Words headerSlot={setWordsMeta} /> : null}
+
+          {view === 'notifications' ? (
+            <Notifications
+              users={users}
+              logs={logs}
+              loading={loading}
+              today={today}
+              initialRecipients={testRecipients}
+            />
+          ) : null}
+
+          {view === 'people' ? (
+            <People
+              users={users}
+              loading={loading}
+              error={error}
+              currentUserId={user.userId}
+              onChanged={loadUsers}
+            />
+          ) : null}
         </div>
       </div>
-
-      {error ? (
-        <div className={`${cardBase} p-6`}>
-          <p className="text-sm text-[#8f2d2d]">{error}</p>
-          <Button className="mt-3" variant="secondary" size="sm" onClick={loadStats}>
-            Retry
-          </Button>
-        </div>
-      ) : (
-        <>
-          {/* Stats cards */}
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <StatsCard
-              label="Total Users"
-              value={stats?.users.total ?? '-'}
-              icon={<Users size={16} />}
-              loading={loading}
-            />
-            <StatsCard
-              label="Authenticated"
-              value={stats?.users.authenticated ?? '-'}
-              icon={<ShieldCheck size={16} />}
-              loading={loading}
-            />
-            <StatsCard
-              label="View Rate"
-              value={stats ? `${stats.engagement.viewRate}%` : '-'}
-              icon={<Eye size={16} />}
-              loading={loading}
-            />
-            <StatsCard
-              label="Push Subs"
-              value={stats?.notifications.pushSubscriptions ?? '-'}
-              icon={<Bell size={16} />}
-              loading={loading}
-            />
-          </div>
-
-          {/* Charts */}
-          <div className={`${cardBase} p-6`}>
-            <UserGrowthChart data={timeline?.userGrowth ?? []} loading={loading} />
-          </div>
-
-          <div className="grid gap-5 lg:grid-cols-2">
-            <div className={cardBase}>
-              <AuthMethodsChart
-                data={stats?.users.byAuthMethod ?? { password: 0, google: 0, emailCode: 0 }}
-                loading={loading}
-              />
-            </div>
-            <div className={cardBase}>
-              <EngagementChart data={timeline?.wordsDelivered ?? []} loading={loading} />
-            </div>
-          </div>
-
-          {/* Events Timeline */}
-          <div className={cardBase}>
-            <EventsTimeline
-              events={events?.recentEvents ?? []}
-              eventCounts={events?.eventCounts ?? {}}
-              clientBreakdown={events?.clientBreakdown ?? { web: 0, pwa: 0 }}
-              loading={loading}
-            />
-          </div>
-        </>
-      )}
-
-      {/* Tab navigation */}
-      <div className={`${cardBase} p-4`}>
-        <div className="flex flex-wrap gap-2 rounded-lg bg-surface p-1">
-          <button
-            type="button"
-            onClick={() => setActiveTab('dashboard')}
-            className={tabButtonClass('dashboard')}
-          >
-            Dashboard
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('words')}
-            className={tabButtonClass('words')}
-          >
-            <Book size={14} className="mr-1.5 inline-block" />
-            Words
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('users')}
-            className={tabButtonClass('users')}
-          >
-            Users
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('notifications')}
-            className={tabButtonClass('notifications')}
-          >
-            Notifications
-          </button>
-        </div>
-      </div>
-
-      {/* Tab content */}
-      {activeTab === 'words' && <WordManagement />}
-      {(activeTab === 'users' || activeTab === 'notifications') && (
-        <div className={`${cardBase} p-6`}>
-          <AdminPanel currentUserId={user.userId} />
-        </div>
-      )}
-
-      {/* Account section */}
-      <div className={`${cardBase} p-6`}>
-        <h3 className="text-lg font-semibold">Account</h3>
-        <p className="mt-1 text-sm text-muted">Signed in as {user.userId}</p>
-        <Button className="mt-3" variant="secondary" onClick={handleLogout}>
-          Sign out
-        </Button>
-      </div>
-    </section>
+    </div>
   );
 }

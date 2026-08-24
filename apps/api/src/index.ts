@@ -1544,6 +1544,9 @@ app.get('/api/admin/users', async (c) => {
     string,
     Array<{ provider: string; email: string | null; createdAt: string }>
   >();
+  // Admin → People needs a "last read" column, and Overview needs to count
+  // who opened a word this week. Both come off user_words.viewed_at.
+  const lastReadByUser = new Map<string, string>();
 
   if (userIds.length > 0) {
     const placeholders = userIds.map(() => '?').join(',');
@@ -1579,6 +1582,24 @@ app.get('/api/admin/users', async (c) => {
       list.push({ provider: row.provider, email: row.email, createdAt: row.created_at });
       oauthByUser.set(row.user_id, list);
     }
+
+    const lastReadResult = await c.env.DB.prepare(
+      `SELECT user_id, MAX(viewed_at) as last_read_at
+       FROM user_words
+       WHERE user_id IN (${placeholders}) AND viewed_at IS NOT NULL
+       GROUP BY user_id`
+    )
+      .bind(...userIds)
+      .all();
+
+    for (const row of lastReadResult.results as Array<{
+      user_id: string;
+      last_read_at: string | null;
+    }>) {
+      if (row.last_read_at) {
+        lastReadByUser.set(row.user_id, row.last_read_at);
+      }
+    }
   }
 
   const usersPayload = users.map((row) => {
@@ -1611,6 +1632,7 @@ app.get('/api/admin/users', async (c) => {
       isAnonymous: row.is_anonymous === 1,
       isAdmin: row.is_admin === 1,
       createdAt: row.created_at,
+      lastReadAt: lastReadByUser.get(row.id) ?? null,
       authProviders,
     };
   });

@@ -98,6 +98,124 @@ const defaultAdminActivity = {
   ],
 };
 
+const defaultAdminUsers = [
+  {
+    id: 'admin-user',
+    username: 'mira',
+    email: 'mira@lexi.app',
+    isAnonymous: false,
+    isAdmin: true,
+    createdAt: '2024-01-01T00:00:00.000Z',
+    lastReadAt: new Date().toISOString(),
+    authProviders: [{ provider: 'google', email: 'mira@lexi.app', createdAt: '2024-01-01T00:00:00.000Z' }],
+  },
+  {
+    id: 'reader-user',
+    username: 'jonas',
+    email: null,
+    isAnonymous: false,
+    isAdmin: false,
+    // Well outside the seven-day window, so this reader reads as dormant.
+    lastReadAt: '2024-01-02T00:00:00.000Z',
+    createdAt: '2024-01-02T00:00:00.000Z',
+    authProviders: [{ provider: 'password', email: 'jonas@lexi.app', createdAt: '2024-01-02T00:00:00.000Z' }],
+  },
+];
+
+const defaultPoolHealth = {
+  minimumAdvancedReadyWords: 25,
+  advancedHealthy: false,
+  byDifficulty: {
+    advanced: { total: 27, enabled: 18, ready: 18, pending: 7, failed: 2, notFound: 0 },
+    balanced: { total: 415, enabled: 412, ready: 412, pending: 3, failed: 0, notFound: 0 },
+    easy: { total: 561, enabled: 560, ready: 560, pending: 0, failed: 0, notFound: 1 },
+  },
+  bySource: [],
+  upcomingPreview: {
+    advanced: [
+      { id: 1, word: 'susurrus', tier: 3, source: 'seed', detailsStatus: 'ready' },
+      { id: 2, word: 'petrichor', tier: 3, source: 'seed', detailsStatus: 'ready' },
+    ],
+    balanced: [],
+    easy: [],
+  },
+};
+
+const defaultReviewQueue = {
+  words: [
+    {
+      id: 1,
+      word: 'susurrus',
+      enabled: false,
+      tier: 3,
+      difficultyCategory: 'advanced',
+      source: 'seed',
+      createdAt: '2024-01-02T00:00:00.000Z',
+      detailsStatus: 'ready',
+      reviewStatus: 'pending_review',
+      reviewedAt: null,
+      reviewedBy: null,
+      reviewNote: null,
+      fetchedAt: '2024-01-02T00:00:00.000Z',
+      error: null,
+      details: {
+        word: 'susurrus',
+        phonetics: '/s(j)uːˈsʌrəs/',
+        audioUrl: null,
+        meanings: [
+          {
+            partOfSpeech: 'noun',
+            definitions: ['Whispering, murmuring, or rustling.'],
+            examples: ['A susurrus of leaves ran along the hedgerow.'],
+          },
+        ],
+        etymology: 'From Latin susurrus, a humming or whispering.',
+      },
+      rawPayload: null,
+    },
+  ],
+  total: 1,
+  limit: 20,
+  offset: 0,
+};
+
+const defaultWordPool = {
+  words: [
+    {
+      id: 10,
+      word: 'evanescent',
+      enabled: true,
+      tier: 3,
+      difficultyCategory: 'advanced',
+      source: 'seed',
+      createdAt: '2024-01-01T00:00:00.000Z',
+      detailsStatus: 'ready',
+      reviewStatus: 'approved',
+      reviewedAt: null,
+      reviewedBy: null,
+      reviewNote: null,
+    },
+  ],
+  total: 1,
+  limit: 20,
+  offset: 0,
+};
+
+const defaultAdminLogs = {
+  logs: [
+    {
+      id: 'log-1',
+      timestamp: new Date().toISOString(),
+      level: 'error',
+      category: 'subscription',
+      user_id: 'reader-user',
+      message: 'Daily notification failed',
+      metadata: { status: 410 },
+      created_at: new Date().toISOString(),
+    },
+  ],
+};
+
 type ApiOverrides = {
   me?: Partial<typeof defaultMe>;
   settings?: typeof defaultSettings;
@@ -177,7 +295,27 @@ async function mockApi(page: Page, overrides: ApiOverrides = {}) {
     }
 
     if (pathname === '/api/admin/users') {
-      await route.fulfill({ json: { users: [], nextCursor: null } });
+      await route.fulfill({ json: { users: defaultAdminUsers, nextCursor: null } });
+      return;
+    }
+
+    if (pathname === '/api/admin/word-pool/health') {
+      await route.fulfill({ json: defaultPoolHealth });
+      return;
+    }
+
+    if (pathname === '/api/admin/word-pool/review') {
+      await route.fulfill({ json: defaultReviewQueue });
+      return;
+    }
+
+    if (pathname === '/api/admin/word-pool') {
+      await route.fulfill({ json: defaultWordPool });
+      return;
+    }
+
+    if (pathname === '/api/admin/logs') {
+      await route.fulfill({ json: defaultAdminLogs });
       return;
     }
 
@@ -257,7 +395,7 @@ test('redirects non-admins away from the admin route', async ({ page }) => {
   await expect(page.getByText("Today's word")).toBeVisible();
 });
 
-test('shows admin actions when authenticated as admin', async ({ page }) => {
+test('opens the admin on Overview, with every figure answering a question', async ({ page }) => {
   await mockApi(page, {
     me: {
       user_id: 'admin-user',
@@ -267,18 +405,103 @@ test('shows admin actions when authenticated as admin', async ({ page }) => {
     },
   });
   await page.goto('/admin');
-  await expect(page.getByText('Signed in as admin-user')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
 
-  // Sending a push lives behind the Notifications tab; the screen opens on the
-  // dashboard.
-  await page.getByRole('button', { name: 'Notifications' }).click();
-  await expect(page.getByRole('button', { name: 'Send now' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible();
 
-  await page.getByRole('textbox', { name: 'Title' }).fill('Test notification');
+  // No figure is titled with a category alone; each asks a question and answers
+  // it in a sentence.
+  await expect(page.getByText('Is the pool healthy?')).toBeVisible();
+  await expect(page.getByText('No — advanced is')).toBeVisible();
+  await expect(page.getByText('18 ready against a 25 minimum')).toBeVisible();
+  await expect(page.getByText('Are people still reading?')).toBeVisible();
+  await expect(page.getByText('How do people get in?')).toBeVisible();
+  await expect(page.getByText('Did anything break?')).toBeVisible();
+
+  // The queue count rides on Review so it is visible from any section.
+  await expect(page.getByRole('navigation', { name: 'Admin sections' }).first()).toContainText('1');
+});
+
+test('the admin nav switches the view instead of stacking screens', async ({ page }) => {
+  await mockApi(page, {
+    me: {
+      user_id: 'admin-user',
+      is_authenticated: true,
+      is_anonymous: false,
+      is_admin: true,
+    },
+  });
+  await page.goto('/admin');
+  await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible();
+
+  const nav = page.getByRole('navigation', { name: 'Admin sections' }).first();
+
+  // Selecting Words replaces the dashboard rather than rendering beneath it.
+  await nav.getByRole('button', { name: 'Words' }).click();
+  await expect(page.getByRole('heading', { name: 'Words' })).toBeVisible();
+  await expect(page.getByText('Is the pool healthy?')).toBeHidden();
+
+  // People and Notifications are separate screens; they used to render the same
+  // component.
+  await nav.getByRole('button', { name: 'People' }).click();
+  await expect(page.getByRole('heading', { name: 'People' })).toBeVisible();
+  // The table and the phone list rows both exist; assert on the table cell.
+  await expect(page.getByRole('cell', { name: 'mira@lexi.app' })).toBeVisible();
+
+  await nav.getByRole('button', { name: /Notif/ }).click();
+  await expect(page.getByRole('heading', { name: 'Notifications' })).toBeVisible();
+  await expect(page.getByText('Send a test')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'mira@lexi.app' })).toBeVisible();
+});
+
+test('sends a test notification to the recipients picked inline', async ({ page }) => {
+  await mockApi(page, {
+    me: {
+      user_id: 'admin-user',
+      is_authenticated: true,
+      is_anonymous: false,
+      is_admin: true,
+    },
+  });
+  await page.goto('/admin');
+
+  const nav = page.getByRole('navigation', { name: 'Admin sections' }).first();
+  await nav.getByRole('button', { name: /Notif/ }).click();
+
+  // The recipient picker sits with the composer it controls.
+  await page.getByRole('button', { name: 'mira@lexi.app' }).click();
+  await page.getByRole('textbox', { name: 'Message' }).fill('Test notification');
+
   const requestPromise = page.waitForRequest((req) => req.url().endsWith('/api/admin/notify'));
-  await page.getByRole('button', { name: 'Send now' }).click();
-  await requestPromise;
+  await page.getByRole('button', { name: 'Send to 1' }).click();
+  const request = await requestPromise;
+  const payload = request.postDataJSON() as { target: string; userIds: string[]; body: string };
+  expect(payload.target).toBe('custom');
+  expect(payload.userIds).toEqual(['admin-user']);
+  expect(payload.body).toBe('Test notification');
+});
+
+test('review rejects only once a note is entered', async ({ page }) => {
+  await mockApi(page, {
+    me: {
+      user_id: 'admin-user',
+      is_authenticated: true,
+      is_anonymous: false,
+      is_admin: true,
+    },
+  });
+  await page.goto('/admin');
+
+  const nav = page.getByRole('navigation', { name: 'Admin sections' }).first();
+  await nav.getByRole('button', { name: /Review/ }).click();
+
+  await expect(page.getByRole('heading', { name: 'susurrus' })).toBeVisible();
+  await expect(page.getByText('Why it was flagged')).toBeVisible();
+
+  // A note is required to reject, optional to approve.
+  const reject = page.getByRole('button', { name: 'Reject' });
+  await expect(reject).toBeDisabled();
+  await page.getByRole('textbox', { name: 'Review note' }).fill('Definition is wrong.');
+  await expect(reject).toBeEnabled();
 });
 
 test('anonymous users can reach settings from the main nav', async ({ page }) => {

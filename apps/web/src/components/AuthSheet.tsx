@@ -303,7 +303,7 @@ export function AuthSheet({ open, onClose, user, onUserChange }: AuthSheetProps)
   };
 
   const inputClass =
-    'rounded-xl border border-[rgba(30,27,22,0.12)] bg-white px-3 py-2 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2';
+    'rounded-xl border border-[rgba(30,27,22,0.12)] bg-white px-3 py-2 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-sage focus-visible:outline-offset-2';
 
   return (
     <div
@@ -319,7 +319,7 @@ export function AuthSheet({ open, onClose, user, onUserChange }: AuthSheetProps)
       >
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h2 className="font-[var(--font-display)] text-2xl">Sign in or create account</h2>
+            <h2 className="font-[var(--font-fraunces)] text-2xl">Sign in or create account</h2>
             <p className="mt-1 text-sm text-muted">
               Keep your history, schedule, and preferences synced across devices.
             </p>
@@ -336,7 +336,7 @@ export function AuthSheet({ open, onClose, user, onUserChange }: AuthSheetProps)
           </Button>
         </div>
 
-        {status ? <p className="mt-4 text-sm text-accent-strong">{status}</p> : null}
+        {status ? <p className="mt-4 text-sm text-sage-strong">{status}</p> : null}
 
         {stage === 'email' ? (
           <div className="mt-6 grid gap-5">

@@ -1,6 +1,7 @@
 import {
   eventSchema,
   type WordCard,
+  type WordPoolEntry,
   type WordDetailsStatus,
   type WordDifficulty,
   type WordReviewStatus,
@@ -339,6 +340,8 @@ export interface AdminUser {
   isAnonymous: boolean;
   isAdmin: boolean;
   createdAt: string;
+  /** Most recent user_words.viewed_at, or null if they have never opened one. */
+  lastReadAt: string | null;
   authProviders: AdminAuthProvider[];
 }
 
@@ -427,6 +430,35 @@ export async function fetchAdminTimelineStats(period: string = '7d'): Promise<Ad
 
 export async function fetchAdminEventStats(period: string = '7d'): Promise<AdminEventStats> {
   return apiFetch<AdminEventStats>(`/admin/stats/activity?period=${period}`);
+}
+
+export type AdminLogLevel = 'info' | 'warn' | 'error';
+export type AdminLogCategory = 'cron' | 'push' | 'subscription' | 'vapid' | 'rate_limit';
+
+export interface AdminLogEntry {
+  id: string;
+  timestamp: string;
+  level: AdminLogLevel;
+  category: AdminLogCategory;
+  user_id: string | null;
+  message: string;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
+}
+
+/**
+ * Delivery and subscription outcomes. Overview's "did anything break?" reads
+ * the error and warn rows; the info rows are the routine count.
+ */
+export async function fetchAdminLogs(
+  options: { level?: AdminLogLevel; category?: AdminLogCategory; limit?: number } = {}
+): Promise<{ logs: AdminLogEntry[] }> {
+  const params = new URLSearchParams();
+  if (options.level) params.set('level', options.level);
+  if (options.category) params.set('category', options.category);
+  if (options.limit) params.set('limit', String(options.limit));
+  const query = params.toString();
+  return apiFetch<{ logs: AdminLogEntry[] }>(`/admin/logs${query ? `?${query}` : ''}`);
 }
 
 // Admin Word Management Types
@@ -539,6 +571,42 @@ export async function bulkCreateAdminWords(words: WordInput[]): Promise<BulkCrea
 
 export async function fetchWordPoolHealth(): Promise<WordPoolHealth> {
   return apiFetch<WordPoolHealth>('/admin/word-pool/health');
+}
+
+export type {
+  WordCard,
+  WordDetailsStatus,
+  WordDifficulty,
+  WordPoolEntry,
+  WordReviewStatus,
+} from '@word-of-the-day/shared';
+
+export interface WordPoolResponse {
+  words: WordPoolEntry[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export async function fetchWordPool(
+  options: {
+    limit?: number;
+    offset?: number;
+    search?: string;
+    difficultyCategory?: WordDifficulty;
+    status?: WordDetailsStatus;
+    enabled?: boolean;
+  } = {}
+): Promise<WordPoolResponse> {
+  const params = new URLSearchParams();
+  if (options.limit) params.set('limit', String(options.limit));
+  if (options.offset) params.set('offset', String(options.offset));
+  if (options.search) params.set('search', options.search);
+  if (options.difficultyCategory) params.set('difficultyCategory', options.difficultyCategory);
+  if (options.status) params.set('status', options.status);
+  if (options.enabled !== undefined) params.set('enabled', String(options.enabled));
+  const query = params.toString();
+  return apiFetch<WordPoolResponse>(`/admin/word-pool${query ? `?${query}` : ''}`);
 }
 
 export interface WordReviewQueueItem {

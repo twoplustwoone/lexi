@@ -16,7 +16,7 @@ export function Loader({ label = 'Loading...', className, tone = 'muted' }: Load
     'h-4 w-4 animate-spin rounded-full border-2 motion-reduce:animate-none',
     tone === 'light'
       ? 'border-white/40 border-t-white'
-      : 'border-[rgba(30,27,22,0.18)] border-t-accent',
+      : 'border-[rgba(30,27,22,0.18)] border-t-sage',
   ].join(' ');
 
   return (
