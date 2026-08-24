@@ -2,6 +2,7 @@ import { useState } from 'preact/hooks';
 import { ChevronRight } from 'lucide-react';
 
 import { AdminEventStats, AdminLogEntry, AdminUser } from '../../../api';
+import { deliveryRuns, totalDelivered } from '../deliveries';
 import { WEEK_MS, displayName, formatDateTime, joinWords } from '../format';
 import { AdminButton, Caption, Figure, SectionLabel, StatusEnum } from '../primitives';
 
@@ -96,8 +97,11 @@ export function BreakageFigure({
     );
 
   const eventCounts = events?.eventCounts ?? {};
+  // Deliveries come from each scheduler run's own tally; counting log rows
+  // would report a run's bookkeeping records as sends.
+  const delivered = totalDelivered(deliveryRuns(recent));
   const routineParts = [
-    routine.length > 0 ? `${routine.length} notifications delivered` : null,
+    delivered > 0 ? `${delivered} notifications delivered` : null,
     eventCounts.auth_flow_completed
       ? `${eventCounts.auth_flow_completed} sign-ins completed`
       : null,

@@ -314,6 +314,11 @@ async function mockApi(page: Page, overrides: ApiOverrides = {}) {
       return;
     }
 
+    if (pathname === '/api/admin/word-pool/import') {
+      await route.fulfill({ json: { created: 1, skipped: 0, filtered: 1, originalCount: 1 } });
+      return;
+    }
+
     if (pathname === '/api/admin/logs') {
       await route.fulfill({ json: defaultAdminLogs });
       return;
@@ -532,4 +537,33 @@ test('the home reminder banner links to settings', async ({ page }) => {
   await expect(bannerLink).toBeVisible();
   await bannerLink.click();
   await expect(page.getByLabel('Delivery time')).toBeVisible();
+});
+
+test('adding a word writes to the pool the app actually reads', async ({ page }) => {
+  await mockApi(page, {
+    me: {
+      user_id: 'admin-user',
+      is_authenticated: true,
+      is_anonymous: false,
+      is_admin: true,
+    },
+  });
+  await page.goto('/admin');
+
+  const nav = page.getByRole('navigation', { name: 'Admin sections' }).first();
+  await nav.getByRole('button', { name: 'Words' }).click();
+  await expect(page.getByRole('heading', { name: 'Words' })).toBeVisible();
+
+  page.once('dialog', (dialog) => dialog.accept('susurrus'));
+
+  // The legacy /admin/words table is neither what this screen lists nor what
+  // daily selection draws from, so an add must go to the pool.
+  const requestPromise = page.waitForRequest(
+    (req) => req.url().endsWith('/api/admin/word-pool/import') && req.method() === 'POST'
+  );
+  await page.getByRole('button', { name: 'Add a word' }).click();
+  const request = await requestPromise;
+  expect((request.postDataJSON() as { words: string[] }).words).toEqual(['susurrus']);
+
+  await expect(page.getByText('Added 1 to the pool.')).toBeVisible();
 });

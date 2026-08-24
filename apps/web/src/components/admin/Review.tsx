@@ -24,6 +24,8 @@ interface ReviewProps {
   queue: WordReviewQueueItem[];
   loading: boolean;
   error: string | null;
+  /** Whole pending backlog, which may run past the loaded page. */
+  queueTotal: number;
   /** Last auto-approve sweep, so the rail can report what it did. */
   lastSweep: { scanned: number; approved: number; flagged: number } | null;
   onSweepComplete: (result: { scanned: number; approved: number; flagged: number }) => void;
@@ -38,6 +40,7 @@ interface ReviewProps {
  */
 export function Review({
   queue,
+  queueTotal,
   loading,
   error,
   lastSweep,
@@ -380,7 +383,10 @@ export function Review({
       <aside
         className={`w-full flex-none border-t pt-6 lg:ml-[26px] lg:w-[300px] lg:border-l lg:border-t-0 lg:pt-[30px] lg:pl-[26px] ${DIVIDER}`}
       >
-        <SectionLabel className="mb-3.5">Still queued</SectionLabel>
+        <SectionLabel className="mb-3.5">
+          Still queued
+          {queueTotal > queue.length ? ` · ${queue.length} of ${queueTotal}` : ''}
+        </SectionLabel>
         <div className="flex flex-col">
           {queue.map((item, itemIndex) => {
             const isCurrent = itemIndex === index;
@@ -417,7 +423,7 @@ export function Review({
           ) : null}
           <div className="flex flex-wrap gap-2">
             <AdminButton variant="ghost" onClick={handleApproveAll} disabled={busy}>
-              Approve all
+              Approve these {queue.length}
             </AdminButton>
             <AdminButton variant="ghost" onClick={handleSweep} disabled={busy}>
               Run sweep

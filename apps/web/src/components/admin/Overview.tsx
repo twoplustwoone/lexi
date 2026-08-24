@@ -70,7 +70,11 @@ export function Overview({
         order="order-3 lg:order-4"
         methods={stats?.users.byAuthMethod ?? { password: 0, google: 0, emailCode: 0 }}
       />
-      <GrowthFigure order="order-4 lg:order-3" points={timeline?.userGrowth ?? []} />
+      <GrowthFigure
+        order="order-4 lg:order-3"
+        points={timeline?.userGrowth ?? []}
+        currentTotal={stats?.users.total ?? 0}
+      />
       <BreakageFigure
         order="order-5"
         logs={logs}

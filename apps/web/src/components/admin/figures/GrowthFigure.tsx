@@ -8,10 +8,10 @@ const VIEW_WIDTH = 470;
 const VIEW_HEIGHT = 92;
 
 /** The single largest day-on-day jump — the one inflection worth annotating. */
-function findInflection(points: GrowthPoint[]) {
+function findInflection(points: Array<{ date: string; joined: number }>) {
   let best: { index: number; delta: number } | null = null;
-  for (let index = 1; index < points.length; index += 1) {
-    const delta = points[index].total - points[index - 1].total;
+  for (let index = 0; index < points.length; index += 1) {
+    const delta = points[index].joined;
     if (delta > 0 && (!best || delta > best.delta)) {
       best = { index, delta };
     }
@@ -20,7 +20,7 @@ function findInflection(points: GrowthPoint[]) {
 }
 
 /** Up to five evenly spaced month labels across the range. */
-function monthLabels(points: GrowthPoint[]): string[] {
+function monthLabels(points: Array<{ date: string }>): string[] {
   const seen: string[] = [];
   for (const point of points) {
     const date = new Date(point.date);
@@ -35,11 +35,30 @@ function monthLabels(points: GrowthPoint[]): string[] {
   return Array.from({ length: 5 }, (_, index) => seen[Math.round(index * step)]);
 }
 
-export function GrowthFigure({ points, order }: { points: GrowthPoint[]; order?: string }) {
-  const usable = points.filter((point) => Number.isFinite(point.total));
-  const latest = usable[usable.length - 1]?.total ?? 0;
-  const earliest = usable[0]?.total ?? 0;
-  const joined = latest - earliest;
+export function GrowthFigure({
+  points,
+  currentTotal,
+  order,
+}: {
+  points: GrowthPoint[];
+  /** Population now, from /admin/stats — the series alone cannot give it. */
+  currentTotal: number;
+  order?: string;
+}) {
+  const perDay = points.filter((point) => Number.isFinite(point.total));
+
+  // The endpoint returns signups *per day*, grouped by created_at — not a
+  // running population. Cumulate them, and anchor the line to the real total
+  // so the period's starting point accounts for everyone who joined earlier.
+  const joined = perDay.reduce((sum, point) => sum + point.total, 0);
+  const baseline = Math.max(0, currentTotal - joined);
+  let running = baseline;
+  const usable = perDay.map((point) => {
+    running += point.total;
+    return { date: point.date, total: running, joined: point.total };
+  });
+
+  const latest = usable.length > 0 ? usable[usable.length - 1].total : currentTotal;
 
   const max = Math.max(1, ...usable.map((point) => point.total));
   const inflection = findInflection(usable);
@@ -63,12 +82,7 @@ export function GrowthFigure({ points, order }: { points: GrowthPoint[]; order?:
     ) : (
       <>
         {latest} {latest === 1 ? 'person' : 'people'}
-        {joined > 0 ? (
-          <>
-            , {joined} joined {joined === 1 ? 'in' : 'across'} this period
-          </>
-        ) : null}
-        .
+        {joined > 0 ? <>, {joined} joined in this period</> : null}.
       </>
     );
 

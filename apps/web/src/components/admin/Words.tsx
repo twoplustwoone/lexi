@@ -1,12 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 
-import {
-  WordDifficulty,
-  WordPoolEntry,
-  bulkCreateAdminWords,
-  createAdminWord,
-  fetchWordPool,
-} from '../../api';
+import { WordDifficulty, WordPoolEntry, fetchWordPool, importWordPool } from '../../api';
 import { difficultyLabel } from './format';
 import {
   AdminButton,
@@ -79,36 +73,62 @@ export function Words({ headerSlot }: { headerSlot: (meta: string) => void }) {
     setOffset(0);
   }, [search, filter]);
 
-  const handleAddWord = async () => {
-    const word = window.prompt('Word to add');
-    if (!word?.trim()) return;
-    const definition = window.prompt(`Definition for ${word.trim()}`);
-    if (!definition?.trim()) return;
+  /**
+   * Both paths import into the word pool. Enrichment writes the card, so a
+   * definition is not asked for here — and the pool is what daily selection
+   * reads, which the legacy words table is not.
+   */
+  const importWords = async (words: string[]) => {
+    setError(null);
     try {
-      await createAdminWord({ word: word.trim(), definition: definition.trim() });
-      setNotice(`Added ${word.trim()}.`);
+      const result = await importWordPool(words, {
+        difficultyCategory: filter === 'all' ? undefined : filter,
+      });
+      const rejected = result.originalCount - result.filtered;
+      setNotice(
+        [
+          `Added ${result.created} to the pool.`,
+          result.skipped ? `${result.skipped} already there.` : null,
+          rejected ? `${rejected} rejected — the pool takes 4–12 letters, a–z.` : null,
+          result.created ? 'Enrichment will fill in the details.' : null,
+        ]
+          .filter(Boolean)
+          .join(' ')
+      );
       void load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to add the word');
+      setError(err instanceof Error ? err.message : 'Failed to add words');
     }
   };
 
-  const handleBulkUpload = async () => {
-    const raw = window.prompt('Paste a JSON array of words');
+  const handleAddWord = () => {
+    const word = window.prompt('Word to add');
+    if (!word?.trim()) return;
+    void importWords([word.trim()]);
+  };
+
+  const handleBulkUpload = () => {
+    const raw = window.prompt('Paste a JSON array of words, e.g. ["susurrus", "petrichor"]');
     if (!raw?.trim()) return;
+    let words: string[];
     try {
       const parsed = JSON.parse(raw);
       if (!Array.isArray(parsed)) {
         throw new Error('Expected a JSON array.');
       }
-      const result = await bulkCreateAdminWords(parsed);
-      setNotice(
-        `Created ${result.created}${result.errors.length ? `, ${result.errors.length} rejected` : ''}.`
-      );
-      void load();
+      // Accept bare strings or objects carrying a `word`, which is what the
+      // older bulk format looked like.
+      words = parsed
+        .map((entry) => (typeof entry === 'string' ? entry : (entry?.word ?? '')))
+        .filter((word: string) => word.trim().length > 0);
+      if (words.length === 0) {
+        throw new Error('No words found in that array.');
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to upload');
+      setError(err instanceof Error ? err.message : 'Could not read that JSON');
+      return;
     }
+    void importWords(words);
   };
 
   return (

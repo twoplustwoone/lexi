@@ -8,6 +8,7 @@ import {
   DailyWordPayload,
   sendAdminNotification,
 } from '../../api';
+import { deliveryRuns } from './deliveries';
 import { displayName, formatDateTime } from './format';
 import { AdminButton, DIVIDER, LoadingLine, SectionLabel, Tag } from './primitives';
 
@@ -80,24 +81,18 @@ export function Notifications({
     }
   };
 
-  /** Recent sends, newest first — delivery result on the right, failures in gold. */
-  const recentSends = useMemo(() => {
-    const byRun = new Map<string, { timestamp: string; delivered: number; failed: number }>();
-    for (const entry of logs) {
-      if (entry.category !== 'push' && entry.category !== 'cron') continue;
-      const bucket = entry.timestamp.slice(0, 16);
-      const existing = byRun.get(bucket) ?? { timestamp: entry.timestamp, delivered: 0, failed: 0 };
-      if (entry.level === 'info') {
-        existing.delivered += 1;
-      } else {
-        existing.failed += 1;
-      }
-      byRun.set(bucket, existing);
-    }
-    return Array.from(byRun.values())
-      .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
-      .slice(0, 8);
-  }, [logs]);
+  /**
+   * Recent sends, newest first. Each row is one scheduler run's reported
+   * tally, not a count of log rows — a run writes several informational
+   * records but delivers whatever `pushSent` says.
+   */
+  const recentSends = useMemo(
+    () =>
+      deliveryRuns(logs)
+        .filter((run) => run.sent > 0 || run.failed > 0)
+        .slice(0, 8),
+    [logs]
+  );
 
   const summary = result
     ? {
@@ -210,11 +205,9 @@ export function Notifications({
             <span className="tabular w-[92px] flex-none text-[12px] text-ink/[0.52]">
               {formatDateTime(send.timestamp)}
             </span>
-            <span className="flex-1 text-[14px]">
-              {send.delivered + send.failed} {send.delivered + send.failed === 1 ? 'send' : 'sends'}
-            </span>
+            <span className="flex-1 text-[14px]">Daily</span>
             <span className="tabular text-[13px]">
-              {send.delivered} delivered
+              {send.sent} delivered
               {send.failed > 0 ? (
                 <span className="text-accent-strong">, {send.failed} failed</span>
               ) : null}

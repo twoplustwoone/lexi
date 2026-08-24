@@ -118,9 +118,25 @@ export function People({ users, loading, error, currentUserId, onChanged }: Peop
                   : `read ${formatRelativeDay(user.lastReadAt).toLowerCase()}`}
               </div>
             </div>
-            {user.isAdmin ? (
-              <span className="text-[12px] uppercase tracking-[0.1em] text-accent">Admin</span>
-            ) : null}
+            {/* The role is actionable here too — an admin on a phone can still
+                promote and demote. */}
+            <button
+              type="button"
+              onClick={() => handleToggleAdmin(user)}
+              disabled={user.id === currentUserId}
+              title={
+                user.id === currentUserId
+                  ? 'You cannot change your own role'
+                  : user.isAdmin
+                    ? 'Remove admin access'
+                    : 'Make admin'
+              }
+              className={`flex min-h-[44px] flex-none cursor-pointer items-center px-1 text-[12px] uppercase tracking-[0.1em] disabled:cursor-default ${
+                user.isAdmin ? 'text-accent' : 'text-ink/[0.55]'
+              }`}
+            >
+              {user.isAdmin ? 'Admin' : 'Reader'}
+            </button>
           </div>
         ))}
       </div>

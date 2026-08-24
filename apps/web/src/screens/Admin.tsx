@@ -12,7 +12,7 @@ import {
   WordPoolHealth,
   WordReviewQueueItem,
   fetchAdminEventStats,
-  fetchAdminLogs,
+  fetchAdminLogsSince,
   fetchAdminStats,
   fetchAdminTimelineStats,
   fetchAdminUsers,
@@ -21,6 +21,7 @@ import {
   fetchWordReviewQueue,
 } from '../api';
 import { AdminRail, AdminSidebar, AdminView } from '../components/admin/AdminNav';
+import { WEEK_MS } from '../components/admin/format';
 import { Notifications } from '../components/admin/Notifications';
 import { Overview } from '../components/admin/Overview';
 import { People } from '../components/admin/People';
@@ -33,7 +34,7 @@ type Period = '7d' | '30d' | '90d';
 const PERIODS: Array<{ value: Period; label: string }> = [
   { value: '7d', label: '7 days' },
   { value: '30d', label: '30 days' },
-  { value: '90d', label: 'All' },
+  { value: '90d', label: '90 days' },
 ];
 
 interface AdminProps {
@@ -64,6 +65,8 @@ export function Admin({ user }: AdminProps) {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [health, setHealth] = useState<WordPoolHealth | null>(null);
   const [queue, setQueue] = useState<WordReviewQueueItem[]>([]);
+  // The queue is paged; the badge and header should report the real backlog.
+  const [queueTotal, setQueueTotal] = useState(0);
   const [today, setToday] = useState<DailyWordPayload | null>(null);
   const [lastSweep, setLastSweep] = useState<{
     scanned: number;
@@ -93,6 +96,7 @@ export function Admin({ user }: AdminProps) {
   const loadQueue = useCallback(async () => {
     const response = await fetchWordReviewQueue({ reviewStatus: 'pending_review', limit: 20 });
     setQueue(response.words);
+    setQueueTotal(response.total);
   }, []);
 
   const loadAll = useCallback(async () => {
@@ -103,13 +107,15 @@ export function Admin({ user }: AdminProps) {
         fetchAdminStats(),
         fetchAdminTimelineStats(period),
         fetchAdminEventStats(period),
-        fetchAdminLogs({ limit: 200 }),
+        // Paged back through the whole window: a single capped page lets
+        // newer routine rows displace a real failure.
+        fetchAdminLogsSince(new Date(Date.now() - WEEK_MS).toISOString()),
         fetchWordPoolHealth(),
       ]);
       setStats(statsData);
       setTimeline(timelineData);
       setEvents(eventsData);
-      setLogs(logsData.logs);
+      setLogs(logsData);
       setHealth(healthData);
       await Promise.all([loadUsers(), loadQueue()]);
     } catch (err) {
@@ -168,11 +174,11 @@ export function Admin({ user }: AdminProps) {
         return {
           title: 'Review',
           meta:
-            queue.length > 0
-              ? `${queue.length} ${queue.length === 1 ? 'word' : 'words'} · flagged by the quality gate`
+            queueTotal > 0
+              ? `${queueTotal} ${queueTotal === 1 ? 'word' : 'words'} · flagged by the quality gate`
               : 'Queue clear',
           actions:
-            queue.length > 0 ? (
+            queueTotal > 0 ? (
               <AdminButton variant="ghost" onClick={() => setView('overview')}>
                 Skip all, review later
               </AdminButton>
@@ -196,7 +202,7 @@ export function Admin({ user }: AdminProps) {
       <AdminSidebar
         active={view}
         onNavigate={setView}
-        queueCount={queue.length}
+        queueCount={queueTotal}
         onBackToApp={handleBackToApp}
       />
 
@@ -204,7 +210,7 @@ export function Admin({ user }: AdminProps) {
         <AdminRail
           active={view}
           onNavigate={setView}
-          queueCount={queue.length}
+          queueCount={queueTotal}
           onBackToApp={handleBackToApp}
         />
 
@@ -223,7 +229,7 @@ export function Admin({ user }: AdminProps) {
               logs={logs}
               users={users}
               health={health}
-              queueCount={queue.length}
+              queueCount={queueTotal}
               onNavigate={setView}
               onSendTest={handleSendTest}
             />
@@ -232,6 +238,7 @@ export function Admin({ user }: AdminProps) {
           {view === 'review' ? (
             <Review
               queue={queue}
+              queueTotal={queueTotal}
               loading={loading}
               error={error}
               lastSweep={lastSweep}

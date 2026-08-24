@@ -451,14 +451,55 @@ export interface AdminLogEntry {
  * the error and warn rows; the info rows are the routine count.
  */
 export async function fetchAdminLogs(
-  options: { level?: AdminLogLevel; category?: AdminLogCategory; limit?: number } = {}
+  options: {
+    level?: AdminLogLevel;
+    category?: AdminLogCategory;
+    limit?: number;
+    offset?: number;
+  } = {}
 ): Promise<{ logs: AdminLogEntry[] }> {
   const params = new URLSearchParams();
   if (options.level) params.set('level', options.level);
   if (options.category) params.set('category', options.category);
   if (options.limit) params.set('limit', String(options.limit));
+  if (options.offset) params.set('offset', String(options.offset));
   const query = params.toString();
   return apiFetch<{ logs: AdminLogEntry[] }>(`/admin/logs${query ? `?${query}` : ''}`);
+}
+
+const LOG_PAGE_SIZE = 500;
+/** Ten pages is far more than a week of logs at this scale, and bounds a runaway. */
+const LOG_PAGE_LIMIT = 10;
+
+/**
+ * Every log back to `sinceIso`, not just the newest page.
+ *
+ * Overview asks whether anything broke in the last seven days. A single capped
+ * request cannot answer that: a failure early in the window is displaced by
+ * newer routine rows, and the figure would report all-clear over a real
+ * failure. Logs come back newest-first, so page until one falls outside the
+ * window.
+ */
+export async function fetchAdminLogsSince(
+  sinceIso: string,
+  options: { level?: AdminLogLevel; category?: AdminLogCategory } = {}
+): Promise<AdminLogEntry[]> {
+  const collected: AdminLogEntry[] = [];
+  for (let page = 0; page < LOG_PAGE_LIMIT; page += 1) {
+    const { logs } = await fetchAdminLogs({
+      ...options,
+      limit: LOG_PAGE_SIZE,
+      offset: page * LOG_PAGE_SIZE,
+    });
+    if (logs.length === 0) break;
+
+    const inWindow = logs.filter((entry) => entry.timestamp >= sinceIso);
+    collected.push(...inWindow);
+
+    // The page ran past the cutoff, or the table is exhausted.
+    if (inWindow.length < logs.length || logs.length < LOG_PAGE_SIZE) break;
+  }
+  return collected;
 }
 
 // Admin Word Management Types
@@ -586,6 +627,36 @@ export interface WordPoolResponse {
   total: number;
   limit: number;
   offset: number;
+}
+
+export interface WordPoolImportResult {
+  created: number;
+  skipped: number;
+  /** Survived the endpoint's `^[a-z]{4,12}$` filter. */
+  filtered: number;
+  originalCount: number;
+}
+
+/**
+ * Add words to the pool selection actually draws from.
+ *
+ * The legacy `/admin/words` endpoint writes the separate `words` table, which
+ * neither this screen nor daily delivery reads — a word added there looks
+ * saved and never arrives. Enrichment fills in the card afterwards, so this
+ * takes bare words rather than definitions.
+ */
+export async function importWordPool(
+  words: string[],
+  options: { source?: string; difficultyCategory?: WordDifficulty } = {}
+): Promise<WordPoolImportResult> {
+  return apiFetch<WordPoolImportResult>('/admin/word-pool/import', {
+    method: 'POST',
+    body: JSON.stringify({
+      words,
+      source: options.source ?? 'admin',
+      ...(options.difficultyCategory ? { difficultyCategory: options.difficultyCategory } : {}),
+    }),
+  });
 }
 
 export async function fetchWordPool(
