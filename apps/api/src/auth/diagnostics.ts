@@ -10,18 +10,27 @@ import { SessionLookup, parseCookies } from './sessions';
  * jar. So the server records what the browser presented on each request and
  * what became of the session it named, and the admin screen reads it back.
  *
- * The three candidate causes leave different fingerprints, and every field
- * here exists to separate them:
+ * What each cause leaves behind, and what it does not:
  *
  *   1. The cookie is never sent. `SameSite=Lax` withholds it whenever the API
  *      is on a different site than the app, so `secFetchSite: 'cross-site'`
  *      with no session cookie names this outright.
- *   2. The browser threw the site's storage away (Safari/iOS does this to
- *      sites it considers idle). Then the cookie AND the client's own
- *      localStorage flag vanish together — `clientExpectation` is what makes
- *      that distinguishable from cause 1.
- *   3. The session genuinely expired. Then the row is still here and says so,
- *      along with how many days it actually lived.
+ *   2. The session genuinely expired. The row outlives it by the evidence
+ *      window and the cookie outlives the row, so the expired row can still be
+ *      found and can say how many days it actually lived.
+ *   3. The browser threw the site's storage away (Safari/iOS does this to
+ *      sites it considers idle). This one is NOT observable on the request it
+ *      happens to: eviction takes the cookie and the app's own localStorage
+ *      flag together, leaving a device that is byte-for-byte a first-time
+ *      visitor. Nothing here can honestly claim to have caught it. What it
+ *      leaves instead is a trace across requests — a session that stops being
+ *      presented long before it expires, with no sign-out recorded — and that
+ *      is read off the accumulated records in the admin screen, not from here.
+ *
+ * Every outcome below is therefore something actually witnessed. A device that
+ * has not told us it was signed in is never counted as having been signed out;
+ * otherwise every first-time reader becomes an incident, and on a cross-site
+ * deployment they would be the overwhelming majority of them.
  */
 
 /**
@@ -43,8 +52,12 @@ export interface RequestFingerprint {
   /**
    * What the app believed before it asked. `expected` means this device
    * completed a sign-in and never logged out, so an unauthenticated answer is
-   * a real regression rather than a stranger's first visit. When the flag
-   * itself is missing on a device we know signed in, its storage was cleared.
+   * a real regression rather than a stranger's first visit — which is the only
+   * thing separating the two, since they are identical on the wire.
+   *
+   * Note what this cannot do: the flag lives in localStorage, so anything that
+   * clears the cookie by clearing the whole site clears this too, and the
+   * request then reads as a stranger's. Absence is never evidence of eviction.
    */
   clientExpectation: 'expected' | 'none' | 'unknown';
   /** `standalone` for an installed PWA — the configuration iOS evicts hardest. */
@@ -55,17 +68,22 @@ export interface RequestFingerprint {
 export type SessionOutcome =
   /** A live session. Recorded too: a session seen on day 3 and gone on day 4 dates the loss. */
   | 'ok'
-  /** The row was found and had passed its expiry. `livedDays` says whether that was the full TTL. */
+  /** The row was found and had passed its expiry. `ageDays` says whether that was the full TTL. */
   | 'expired'
   /** A cookie arrived naming a session that no longer exists: a purged row, or a rotated SESSION_SECRET. */
   | 'unknown_token'
-  /** No session cookie on a request the browser called cross-site. Cause 1. */
+  /** No session cookie on a request the browser called cross-site. */
   | 'cookie_withheld_cross_site'
-  /** No session cookie, but this device kept other state — the cookie alone was lost. */
+  /** The session cookie is gone while other cookies survived — it was lost on its own. */
   | 'cookie_missing'
-  /** Nothing at all came back from a device that expected to be signed in. Cause 2. */
-  | 'storage_cleared'
-  /** No session and no sign that there ever was one. The ordinary anonymous reader. */
+  /** No cookies at all, though the app's own stored state survived: the jar was cleared. */
+  | 'cookies_cleared'
+  /**
+   * No session, and nothing claiming there was one. The ordinary anonymous
+   * reader — and also, indistinguishably, a device whose storage was evicted.
+   * Never counted as a sign-out, because on this request it cannot be told
+   * from someone arriving for the first time.
+   */
   | 'anonymous';
 
 function platformOf(userAgent: string | null): string {
@@ -117,15 +135,19 @@ export function classifyOutcome(
   if (lookup.outcome === 'expired') return 'expired';
   if (lookup.outcome === 'unknown_token') return 'unknown_token';
 
-  // No session cookie arrived. Everything below separates "the browser
-  // refused to send it" from "it is not there any more".
-  if (fingerprint.secFetchSite === 'cross-site') return 'cookie_withheld_cross_site';
+  // No token arrived. Nothing below is a sign-out unless this device says it
+  // had signed in: a first-time reader sends no session cookie either, and on
+  // a cross-site deployment sends it with `cross-site` set, which would make
+  // every stranger an incident and bury the real ones.
+  //
+  // The lookups above need no such gate — an expired or unrecognised row is
+  // the server's own evidence that a session existed, whatever the client says.
+  if (fingerprint.clientExpectation !== 'expected') return 'anonymous';
 
-  const knownDevice = fingerprint.hadCookies || fingerprint.hasAnonHeader;
-  if (fingerprint.clientExpectation === 'expected') {
-    return knownDevice ? 'cookie_missing' : 'storage_cleared';
-  }
-  return knownDevice ? 'cookie_missing' : 'anonymous';
+  if (fingerprint.secFetchSite === 'cross-site') return 'cookie_withheld_cross_site';
+  // The flag survived in localStorage. Whether anything else did says which
+  // of the two happened: the session cookie went, or the jar was emptied.
+  return fingerprint.hadCookies ? 'cookie_missing' : 'cookies_cleared';
 }
 
 /** The outcomes that mean somebody was signed out without asking to be. */
@@ -134,7 +156,7 @@ const UNEXPECTED: ReadonlySet<SessionOutcome> = new Set([
   'unknown_token',
   'cookie_withheld_cross_site',
   'cookie_missing',
-  'storage_cleared',
+  'cookies_cleared',
 ]);
 
 const SUMMARIES: Record<SessionOutcome, string> = {
@@ -144,7 +166,7 @@ const SUMMARIES: Record<SessionOutcome, string> = {
   cookie_withheld_cross_site:
     'Signed out: the browser withheld the session cookie on a cross-site request',
   cookie_missing: 'Signed out: the session cookie was gone, other site data was not',
-  storage_cleared: 'Signed out: the browser had cleared this site’s storage',
+  cookies_cleared: 'Signed out: every cookie was gone, the app’s own stored state was not',
   anonymous: 'Anonymous reader, no session expected',
 };
 
@@ -154,6 +176,30 @@ function daysBetween(fromIso: string, toMs: number): number | null {
   const from = Date.parse(fromIso);
   if (!Number.isFinite(from)) return null;
   return Math.round(((toMs - from) / DAY_MS) * 10) / 10;
+}
+
+/**
+ * How often an accepted session is worth writing down. Every app open asks
+ * `/api/me`, and recording each one would bury the handful of records that
+ * matter under thousands that say nothing changed. One every few hours is
+ * enough to date a session's last sighting, which is all the accepted records
+ * are for.
+ */
+const ACCEPTED_RECORD_INTERVAL_SECONDS = 6 * 60 * 60;
+
+async function acceptedIsWorthRecording(env: Env, sessionId: string): Promise<boolean> {
+  const key = `auth:seen:${sessionId}`;
+  try {
+    if (await env.KV.get(key)) {
+      return false;
+    }
+    await env.KV.put(key, '1', { expirationTtl: ACCEPTED_RECORD_INTERVAL_SECONDS });
+    return true;
+  } catch {
+    // If the throttle cannot be consulted, record anyway. Missing evidence is
+    // the failure this whole apparatus exists to stop; a duplicate row is not.
+    return true;
+  }
 }
 
 /**
@@ -170,6 +216,14 @@ export async function recordSessionCheck(
   const outcome = classifyOutcome(lookup, fingerprint);
   const now = Date.now();
 
+  if (
+    outcome === 'ok' &&
+    lookup.outcome === 'valid' &&
+    !(await acceptedIsWorthRecording(env, lookup.sessionId))
+  ) {
+    return;
+  }
+
   const metadata: Record<string, unknown> = {
     outcome,
     ...fingerprint,
@@ -183,6 +237,7 @@ export async function recordSessionCheck(
   };
 
   if (lookup.outcome === 'valid' || lookup.outcome === 'expired') {
+    metadata.sessionId = lookup.sessionId;
     metadata.sessionCreatedAt = lookup.createdAt;
     metadata.sessionExpiresAt = lookup.expiresAt;
     // How long the session lasted in practice. A TTL of 30 that dies at 2 is
@@ -201,7 +256,7 @@ export async function recordSessionCheck(
 export async function recordSessionCreated(
   env: Env,
   request: Request,
-  params: { userId: string; method: string; expiresAt: string }
+  params: { sessionId: string; userId: string; method: string; expiresAt: string }
 ): Promise<void> {
   await logInfo(
     env,
@@ -210,6 +265,7 @@ export async function recordSessionCreated(
     {
       outcome: 'signed_in',
       method: params.method,
+      sessionId: params.sessionId,
       sessionExpiresAt: params.expiresAt,
       ...describeRequest(request),
       cookiePolicy: {
@@ -229,13 +285,13 @@ export async function recordSessionCreated(
 export async function recordSessionCleared(
   env: Env,
   request: Request,
-  userId: string | null
+  params: { sessionId: string | null; userId: string | null }
 ): Promise<void> {
   await logInfo(
     env,
     'auth',
     'Signed out at the reader’s request',
-    { outcome: 'signed_out', ...describeRequest(request) },
-    userId ?? undefined
+    { outcome: 'signed_out', sessionId: params.sessionId, ...describeRequest(request) },
+    params.userId ?? undefined
   );
 }

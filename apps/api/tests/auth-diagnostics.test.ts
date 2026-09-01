@@ -2,15 +2,34 @@ import { DateTime } from 'luxon';
 import { describe, expect, it } from 'vitest';
 
 import { classifyOutcome, describeRequest, recordSessionCheck } from '../src/auth/diagnostics';
-import { createSession, inspectSession } from '../src/auth/sessions';
-import { queryLogs } from '../src/notifications/logger';
+import {
+  buildSessionCookie,
+  createSession,
+  inspectSession,
+  purgeExpiredSessions,
+} from '../src/auth/sessions';
+import { logInfo, purgeExpiredAuthLogs, queryLogs } from '../src/notifications/logger';
+import { hashToken } from '../src/utils/crypto';
 import { createTestEnv } from './helpers';
 
 function request(headers: Record<string, string>): Request {
   return new Request('http://localhost/api/me', { headers });
 }
 
+/** A device that completed a sign-in and never signed out. */
+function signedInBefore(extra: Record<string, string> = {}): Request {
+  return request({ 'x-client-session': 'expected', ...extra });
+}
+
 const NO_TOKEN = { outcome: 'no_token' } as const;
+
+async function createUser(env: Awaited<ReturnType<typeof createTestEnv>>['env'], id = 'user-1') {
+  await env.DB.prepare(
+    'INSERT INTO users (id, timezone, is_anonymous, preferences_json, created_at) VALUES (?, ?, 1, ?, ?)'
+  )
+    .bind(id, 'UTC', '{}', DateTime.utc().toISO())
+    .run();
+}
 
 describe('describeRequest', () => {
   it('records cookie names but never the session token itself', () => {
@@ -24,10 +43,9 @@ describe('describeRequest', () => {
 
   it('reads the browser’s own view of the request', () => {
     const fingerprint = describeRequest(
-      request({
+      signedInBefore({
         'sec-fetch-site': 'cross-site',
         origin: 'https://lexi.example.dev',
-        'x-client-session': 'expected',
         'x-client-display': 'standalone',
         'user-agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)',
       })
@@ -43,51 +61,112 @@ describe('describeRequest', () => {
 });
 
 describe('classifyOutcome', () => {
-  it('names a cross-site refusal when the browser withheld the cookie', () => {
-    const fingerprint = describeRequest(
-      request({ 'sec-fetch-site': 'cross-site', 'x-client-session': 'expected' })
-    );
-    expect(classifyOutcome(NO_TOKEN, fingerprint)).toBe('cookie_withheld_cross_site');
+  describe('a device that never signed in is never a sign-out', () => {
+    // Each of these would otherwise be counted as an incident, and readers who
+    // never sign in are the overwhelming majority of requests.
+
+    it('does not report a first-time reader', () => {
+      expect(classifyOutcome(NO_TOKEN, describeRequest(request({})))).toBe('anonymous');
+    });
+
+    it('does not report one whose request the browser calls cross-site', () => {
+      // The deployment where cross-site diagnosis matters is exactly the one
+      // where every stranger's request looks like this.
+      const stranger = describeRequest(request({ 'sec-fetch-site': 'cross-site' }));
+      expect(classifyOutcome(NO_TOKEN, stranger)).toBe('anonymous');
+    });
+
+    it('does not report one carrying an anonymous cookie', () => {
+      // /api/me hands every anonymous reader an anon_id, so from their second
+      // request onwards they arrive with cookies but no session.
+      const returning = describeRequest(
+        request({ cookie: 'anon_id=abc', 'sec-fetch-site': 'same-site' })
+      );
+      expect(classifyOutcome(NO_TOKEN, returning)).toBe('anonymous');
+    });
+
+    it('does not report one that has signed out', () => {
+      const signedOut = describeRequest(
+        request({ cookie: 'anon_id=abc', 'x-client-session': 'none' })
+      );
+      expect(classifyOutcome(NO_TOKEN, signedOut)).toBe('anonymous');
+    });
   });
 
-  it('separates cleared storage from a cookie lost on its own', () => {
-    // Nothing came back at all, but the app knew it had signed in: the
-    // browser threw the site away, flag and cookie together.
-    const evicted = describeRequest(
-      request({ 'sec-fetch-site': 'same-site', 'x-client-session': 'expected' })
-    );
-    expect(classifyOutcome(NO_TOKEN, evicted)).toBe('storage_cleared');
+  describe('a device that had signed in', () => {
+    it('names a cross-site refusal', () => {
+      const fingerprint = describeRequest(signedInBefore({ 'sec-fetch-site': 'cross-site' }));
+      expect(classifyOutcome(NO_TOKEN, fingerprint)).toBe('cookie_withheld_cross_site');
+    });
 
-    // The device kept its other cookie, so only the session cookie went.
-    const cookieOnly = describeRequest(
-      request({
-        'sec-fetch-site': 'same-site',
-        cookie: 'anon_id=abc',
-        'x-client-session': 'expected',
-      })
-    );
-    expect(classifyOutcome(NO_TOKEN, cookieOnly)).toBe('cookie_missing');
+    it('separates the session cookie going from the whole jar going', () => {
+      const sessionOnly = describeRequest(
+        signedInBefore({ cookie: 'anon_id=abc', 'sec-fetch-site': 'same-site' })
+      );
+      expect(classifyOutcome(NO_TOKEN, sessionOnly)).toBe('cookie_missing');
+
+      const emptyJar = describeRequest(signedInBefore({ 'sec-fetch-site': 'same-site' }));
+      expect(classifyOutcome(NO_TOKEN, emptyJar)).toBe('cookies_cleared');
+    });
   });
 
-  it('does not report a first-time reader as a failure', () => {
-    const stranger = describeRequest(request({ 'sec-fetch-site': 'same-site' }));
-    expect(classifyOutcome(NO_TOKEN, stranger)).toBe('anonymous');
-  });
-
-  it('distinguishes an expired session from one that is not on record', () => {
-    const fingerprint = describeRequest(request({ cookie: 'session=x' }));
+  it('trusts the row over the client for outcomes the server can prove', () => {
+    // Storage eviction takes the client's flag with the cookie, so a real
+    // sign-out can arrive claiming nothing. An expired or unrecognised row is
+    // the server's own evidence that a session existed, and still counts.
+    const noClaim = describeRequest(request({ cookie: 'session=x' }));
     expect(
       classifyOutcome(
         {
           outcome: 'expired',
+          sessionId: 's1',
           userId: 'u',
           createdAt: '2026-01-01T00:00:00.000Z',
           expiresAt: '2026-01-31T00:00:00.000Z',
         },
-        fingerprint
+        noClaim
       )
     ).toBe('expired');
-    expect(classifyOutcome({ outcome: 'unknown_token' }, fingerprint)).toBe('unknown_token');
+    expect(classifyOutcome({ outcome: 'unknown_token' }, noClaim)).toBe('unknown_token');
+  });
+});
+
+describe('the session cookie outlives the session', () => {
+  it('carries the dead token long enough for the expired row to be found', async () => {
+    const { env, cleanup } = await createTestEnv();
+    try {
+      // Given equal lifetimes the browser drops the cookie exactly when the row
+      // expires, and every genuine expiry arrives as an empty request instead.
+      const cookie = buildSessionCookie(env, 'token');
+      const maxAge = Number(/Max-Age=(\d+)/.exec(cookie)?.[1]);
+      const ttlSeconds = Number(env.SESSION_TTL_DAYS) * 24 * 60 * 60;
+
+      expect(maxAge).toBeGreaterThan(ttlSeconds);
+      expect(maxAge).toBe(ttlSeconds + 14 * 24 * 60 * 60);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('still refuses the token it keeps carrying', async () => {
+    const { env, cleanup } = await createTestEnv();
+    try {
+      await createUser(env);
+      const session = await createSession(env, 'user-1');
+      await env.DB.prepare('UPDATE sessions SET expires_at = ? WHERE id = ?')
+        .bind(DateTime.utc().minus({ hours: 1 }).toISO(), session.id)
+        .run();
+
+      const { getSessionUserId } = await import('../src/auth/sessions');
+      expect(await getSessionUserId(env, session.token)).toBeNull();
+
+      // ...but the row is still there to say how long it lasted.
+      const lookup = await inspectSession(env, session.token);
+      expect(lookup.outcome).toBe('expired');
+      expect(lookup).toMatchObject({ userId: 'user-1' });
+    } finally {
+      await cleanup();
+    }
   });
 });
 
@@ -95,67 +174,65 @@ describe('inspectSession', () => {
   it('reports a live session without disturbing it', async () => {
     const { env, cleanup } = await createTestEnv();
     try {
-      await env.DB.prepare(
-        'INSERT INTO users (id, timezone, is_anonymous, preferences_json, created_at) VALUES (?, ?, 1, ?, ?)'
-      )
-        .bind('user-1', 'UTC', '{}', DateTime.utc().toISO())
-        .run();
-
+      await createUser(env);
       const session = await createSession(env, 'user-1');
       const lookup = await inspectSession(env, session.token);
 
       expect(lookup.outcome).toBe('valid');
-      expect(lookup).toMatchObject({ userId: 'user-1' });
+      expect(lookup).toMatchObject({ userId: 'user-1', sessionId: session.id });
     } finally {
       await cleanup();
     }
   });
+});
 
-  it('keeps a recently expired session as evidence rather than deleting it', async () => {
+describe('purgeExpiredSessions', () => {
+  it('keeps recent evidence and collects what is past the window', async () => {
     const { env, cleanup } = await createTestEnv();
     try {
-      // A session that died yesterday, two days after it was issued — the
-      // exact shape the "logged out again after a couple of days" report
-      // would leave, and the row that has to survive to prove it.
-      const createdAt = DateTime.utc().minus({ days: 3 }).toISO() as string;
-      const expiresAt = DateTime.utc().minus({ days: 1 }).toISO() as string;
-      const { hashToken } = await import('../src/utils/crypto');
-      await env.DB.prepare(
-        'INSERT INTO sessions (id, user_id, token_hash, created_at, expires_at) VALUES (?, ?, ?, ?, ?)'
-      )
-        .bind('s1', 'user-1', hashToken('token-1', env.SESSION_SECRET), createdAt, expiresAt)
-        .run();
-
-      const { getSessionUserId } = await import('../src/auth/sessions');
-      expect(await getSessionUserId(env, 'token-1')).toBeNull();
-
-      const lookup = await inspectSession(env, 'token-1');
-      expect(lookup.outcome).toBe('expired');
-      expect(lookup).toMatchObject({ createdAt, expiresAt });
-    } finally {
-      await cleanup();
-    }
-  });
-
-  it('purges a session once it is long past the forensic window', async () => {
-    const { env, cleanup } = await createTestEnv();
-    try {
-      const { hashToken } = await import('../src/utils/crypto');
-      await env.DB.prepare(
-        'INSERT INTO sessions (id, user_id, token_hash, created_at, expires_at) VALUES (?, ?, ?, ?, ?)'
-      )
-        .bind(
-          's2',
-          'user-1',
-          hashToken('token-2', env.SESSION_SECRET),
-          DateTime.utc().minus({ days: 90 }).toISO(),
-          DateTime.utc().minus({ days: 60 }).toISO()
+      const insert = async (id: string, expiredDaysAgo: number) =>
+        env.DB.prepare(
+          'INSERT INTO sessions (id, user_id, token_hash, created_at, expires_at) VALUES (?, ?, ?, ?, ?)'
         )
-        .run();
+          .bind(
+            id,
+            'user-1',
+            hashToken(id, env.SESSION_SECRET),
+            DateTime.utc().minus({ days: expiredDaysAgo + 30 }).toISO(),
+            DateTime.utc().minus({ days: expiredDaysAgo }).toISO()
+          )
+          .run();
 
-      const { getSessionUserId } = await import('../src/auth/sessions');
-      expect(await getSessionUserId(env, 'token-2')).toBeNull();
-      expect(await inspectSession(env, 'token-2')).toEqual({ outcome: 'unknown_token' });
+      await insert('recent', 2);
+      await insert('stale', 60);
+      // A sweep is the only thing that can collect these: nobody returns to
+      // present the token that a request-driven purge would need.
+      expect(await purgeExpiredSessions(env)).toBe(1);
+
+      expect((await inspectSession(env, 'recent')).outcome).toBe('expired');
+      expect((await inspectSession(env, 'stale')).outcome).toBe('unknown_token');
+    } finally {
+      await cleanup();
+    }
+  });
+});
+
+describe('purgeExpiredAuthLogs', () => {
+  it('collects only its own category', async () => {
+    const { env, cleanup } = await createTestEnv();
+    try {
+      await logInfo(env, 'auth', 'old auth');
+      await logInfo(env, 'push', 'old push');
+      await env.DB.prepare('UPDATE notification_logs SET timestamp = ?')
+        .bind(DateTime.utc().minus({ days: 90 }).toISO())
+        .run();
+      await logInfo(env, 'auth', 'fresh auth');
+
+      expect(await purgeExpiredAuthLogs(env)).toBe(1);
+      expect((await queryLogs(env, { category: 'auth' })).map((row) => row.message)).toEqual([
+        'fresh auth',
+      ]);
+      expect(await queryLogs(env, { category: 'push' })).toHaveLength(1);
     } finally {
       await cleanup();
     }
@@ -171,6 +248,7 @@ describe('recordSessionCheck', () => {
         request({ cookie: 'session=x', 'sec-fetch-site': 'same-site' }),
         {
           outcome: 'expired',
+          sessionId: 's1',
           userId: 'user-1',
           createdAt: DateTime.utc().minus({ days: 2 }).toISO() as string,
           expiresAt: DateTime.utc().minus({ hours: 1 }).toISO() as string,
@@ -201,6 +279,47 @@ describe('recordSessionCheck', () => {
       const [entry] = await queryLogs(env, { category: 'auth' });
       expect(entry.level).toBe('info');
       expect(JSON.parse(entry.metadata_json ?? '{}').outcome).toBe('anonymous');
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('records an accepted session once, not once per app open', async () => {
+    const { env, cleanup } = await createTestEnv();
+    try {
+      const lookup = {
+        outcome: 'valid',
+        sessionId: 's1',
+        userId: 'user-1',
+        createdAt: DateTime.utc().minus({ days: 1 }).toISO() as string,
+        expiresAt: DateTime.utc().plus({ days: 29 }).toISO() as string,
+      } as const;
+
+      for (let i = 0; i < 5; i += 1) {
+        await recordSessionCheck(env, request({ cookie: 'session=x' }), lookup, 'user-1');
+      }
+
+      expect(await queryLogs(env, { category: 'auth' })).toHaveLength(1);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('never throttles a sign-out away', async () => {
+    const { env, cleanup } = await createTestEnv();
+    try {
+      for (let i = 0; i < 3; i += 1) {
+        await recordSessionCheck(
+          env,
+          signedInBefore({ cookie: 'anon_id=abc', 'sec-fetch-site': 'same-site' }),
+          NO_TOKEN,
+          'user-1'
+        );
+      }
+
+      const entries = await queryLogs(env, { category: 'auth' });
+      expect(entries).toHaveLength(3);
+      expect(entries.every((entry) => entry.level === 'warn')).toBe(true);
     } finally {
       await cleanup();
     }

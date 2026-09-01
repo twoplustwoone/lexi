@@ -21,12 +21,14 @@ export function getTimeZone(): string {
  * Whether this device believes it is signed in, kept alongside the session
  * cookie but in different storage.
  *
- * It exists to tell two sign-outs apart. When the cookie is gone but this flag
- * survives, something took the cookie specifically — a SameSite rule, or an
- * expiry. When both go at once, the browser cleared the whole site, which is
- * what Safari does to a site it considers idle. The server cannot distinguish
- * those on its own: a signed-out request and a stranger's first request look
- * identical to it.
+ * It exists so that a device which lost a session is not mistaken for one that
+ * never had one — on the wire those are the same request, and without this the
+ * server would count every first-time reader as an unwanted sign-out.
+ *
+ * It cannot report eviction. This flag lives in localStorage, so a browser
+ * clearing the site's storage takes it along with the cookie, and the request
+ * that follows is a stranger's in every respect. Its absence is never evidence
+ * of anything; only its presence carries information.
  */
 const SESSION_EXPECTATION_KEY = 'wotd:session_expected';
 

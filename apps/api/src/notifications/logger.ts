@@ -98,6 +98,23 @@ export function logError(
   return log(env, { level: 'error', category, message, metadata, userId });
 }
 
+/**
+ * Drop `auth` records past their useful life.
+ *
+ * Only that category: it is the one this table gained for diagnosing
+ * sign-outs, and it is written on every app open, so it is the only one whose
+ * growth is unbounded. Nothing else in here is this sweep's to delete.
+ */
+export async function purgeExpiredAuthLogs(env: Env, retentionDays = 30): Promise<number> {
+  const cutoff = DateTime.utc().minus({ days: retentionDays }).toISO();
+  const result = await env.DB.prepare(
+    "DELETE FROM notification_logs WHERE category = 'auth' AND timestamp <= ?"
+  )
+    .bind(cutoff)
+    .run();
+  return result.meta?.changes ?? 0;
+}
+
 export interface LogQueryParams {
   category?: LogCategory;
   level?: LogLevel;

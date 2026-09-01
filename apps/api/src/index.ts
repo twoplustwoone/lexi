@@ -34,6 +34,7 @@ import {
   getSessionUserId,
   inspectSession,
   parseCookies,
+  purgeExpiredSessions,
 } from './auth/sessions';
 import { Env } from './env';
 import {
@@ -44,7 +45,14 @@ import {
   updateUserTimezone,
   upsertNotificationSchedule,
 } from './db';
-import { logInfo, logWarn, LogCategory, LogLevel, queryLogs } from './notifications/logger';
+import {
+  logInfo,
+  logWarn,
+  purgeExpiredAuthLogs,
+  LogCategory,
+  LogLevel,
+  queryLogs,
+} from './notifications/logger';
 import {
   isAllowedPushEndpoint,
   sendWebPushNotification,
@@ -812,6 +820,7 @@ app.post('/api/auth/signup', async (c) => {
   background(
     c,
     recordSessionCreated(c.env, c.req.raw, {
+      sessionId: session.id,
       userId: userId,
       method: 'email_password',
       expiresAt: session.expiresAt,
@@ -889,6 +898,7 @@ app.post('/api/auth/login', async (c) => {
   background(
     c,
     recordSessionCreated(c.env, c.req.raw, {
+      sessionId: session.id,
       userId: record.user_id as string,
       method: 'email_password',
       expiresAt: session.expiresAt,
@@ -1065,6 +1075,7 @@ app.post('/api/auth/email/code/verify', async (c) => {
   background(
     c,
     recordSessionCreated(c.env, c.req.raw, {
+      sessionId: session.id,
       userId: userId,
       method: 'email_code',
       expiresAt: session.expiresAt,
@@ -1139,6 +1150,7 @@ app.post('/api/auth/google', async (c) => {
   background(
     c,
     recordSessionCreated(c.env, c.req.raw, {
+      sessionId: session.id,
       userId: userId,
       method: 'google',
       expiresAt: session.expiresAt,
@@ -1162,11 +1174,16 @@ app.post('/api/auth/google', async (c) => {
 app.post('/api/auth/logout', async (c) => {
   const cookies = parseCookies(c.req.header('cookie') ?? null);
   const token = cookies.session ?? null;
-  const userId = await getSessionUserId(c.env, token);
+  const lookup = await inspectSession(c.env, token);
+  const identified =
+    lookup.outcome === 'valid' || lookup.outcome === 'expired'
+      ? { sessionId: lookup.sessionId, userId: lookup.userId }
+      : { sessionId: null, userId: null };
   await clearSession(c.env, token);
   appendSetCookie(c, buildSessionCookie(c.env, '', { clear: true }));
-  // Recorded so a sign-out the reader asked for is never read as a failure.
-  background(c, recordSessionCleared(c.env, c.req.raw, userId));
+  // Recorded so a sign-out the reader asked for is never read as a failure —
+  // by name, so the session is excluded from the ones that went quiet.
+  background(c, recordSessionCleared(c.env, c.req.raw, identified));
   return c.json({ ok: true });
 });
 
@@ -2574,6 +2591,12 @@ export default {
     if (isAutoApproveEnabled(env.ENRICHMENT_AUTO_APPROVE)) {
       ctx.waitUntil(autoApproveReviewQueue(env));
     }
+
+    // Collect what the diagnostics keep alive. Neither can be cleaned up by a
+    // request: a reader who stops coming back never presents the token that
+    // would purge their session, and nobody visits to expire a log row.
+    ctx.waitUntil(purgeExpiredSessions(env));
+    ctx.waitUntil(purgeExpiredAuthLogs(env));
   },
 };
 
