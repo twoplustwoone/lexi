@@ -165,11 +165,15 @@ export async function fetchMe(): Promise<{
     is_anonymous: boolean;
     is_admin: boolean;
   }>('/me');
-  // Set on the way in as well as at sign-in: a device that was already signed
-  // in before this shipped still gets flagged, so its next sign-out is legible.
-  if (me.is_authenticated) {
-    setSessionExpectation(true);
-  }
+  // Kept in step with the server on every ask, in both directions.
+  //
+  // Setting it here as well as at sign-in means a device that was already
+  // signed in before this shipped still gets flagged, so its next sign-out is
+  // legible. Clearing it is what makes a loss count once: the flag says "I
+  // believe I have a session", and the server has just said otherwise, so
+  // every later app open would otherwise report the same loss again — enough
+  // repeats from one reader to outweigh everyone else and pick the verdict.
+  setSessionExpectation(me.is_authenticated);
   return me;
 }
 

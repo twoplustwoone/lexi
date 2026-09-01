@@ -74,10 +74,18 @@ export type SessionOutcome =
   | 'unknown_token'
   /** No session cookie on a request the browser called cross-site. */
   | 'cookie_withheld_cross_site'
-  /** The session cookie is gone while other cookies survived — it was lost on its own. */
+  /**
+   * A device that had signed in came back without its session cookie.
+   *
+   * This deliberately does not distinguish "the session cookie alone went"
+   * from "the whole jar was emptied", though the cookie names are recorded
+   * either way. The app registers an anonymous identity before it asks
+   * `/api/me`, and that endpoint always sets an `anon_id`, so by the time this
+   * request arrives the jar has been refilled and its emptiness is no longer
+   * visible. Splitting the two here would only have produced a confident
+   * answer that the flow cannot support.
+   */
   | 'cookie_missing'
-  /** No cookies at all, though the app's own stored state survived: the jar was cleared. */
-  | 'cookies_cleared'
   /**
    * No session, and nothing claiming there was one. The ordinary anonymous
    * reader — and also, indistinguishably, a device whose storage was evicted.
@@ -145,9 +153,10 @@ export function classifyOutcome(
   if (fingerprint.clientExpectation !== 'expected') return 'anonymous';
 
   if (fingerprint.secFetchSite === 'cross-site') return 'cookie_withheld_cross_site';
-  // The flag survived in localStorage. Whether anything else did says which
-  // of the two happened: the session cookie went, or the jar was emptied.
-  return fingerprint.hadCookies ? 'cookie_missing' : 'cookies_cleared';
+  // `hadCookies` is recorded but deliberately not read here: anonymous
+  // registration runs before this request and hands back an `anon_id`, so the
+  // jar is never observed empty regardless of what the reader cleared.
+  return 'cookie_missing';
 }
 
 /** The outcomes that mean somebody was signed out without asking to be. */
@@ -156,7 +165,6 @@ const UNEXPECTED: ReadonlySet<SessionOutcome> = new Set([
   'unknown_token',
   'cookie_withheld_cross_site',
   'cookie_missing',
-  'cookies_cleared',
 ]);
 
 const SUMMARIES: Record<SessionOutcome, string> = {
@@ -165,8 +173,7 @@ const SUMMARIES: Record<SessionOutcome, string> = {
   unknown_token: 'Signed out: the session cookie named a session that no longer exists',
   cookie_withheld_cross_site:
     'Signed out: the browser withheld the session cookie on a cross-site request',
-  cookie_missing: 'Signed out: the session cookie was gone, other site data was not',
-  cookies_cleared: 'Signed out: every cookie was gone, the app’s own stored state was not',
+  cookie_missing: 'Signed out: the session cookie did not come back',
   anonymous: 'Anonymous reader, no session expected',
 };
 

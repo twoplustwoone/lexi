@@ -99,14 +99,18 @@ describe('classifyOutcome', () => {
       expect(classifyOutcome(NO_TOKEN, fingerprint)).toBe('cookie_withheld_cross_site');
     });
 
-    it('separates the session cookie going from the whole jar going', () => {
+    it('reports a missing session cookie without reading the rest of the jar', () => {
+      // The app registers an anonymous identity before it asks /api/me, and
+      // that endpoint always sets an anon_id, so the jar is refilled before
+      // this request arrives. Whether the reader had emptied it is no longer
+      // visible, and both of these are the same observation.
       const sessionOnly = describeRequest(
         signedInBefore({ cookie: 'anon_id=abc', 'sec-fetch-site': 'same-site' })
       );
       expect(classifyOutcome(NO_TOKEN, sessionOnly)).toBe('cookie_missing');
 
       const emptyJar = describeRequest(signedInBefore({ 'sec-fetch-site': 'same-site' }));
-      expect(classifyOutcome(NO_TOKEN, emptyJar)).toBe('cookies_cleared');
+      expect(classifyOutcome(NO_TOKEN, emptyJar)).toBe('cookie_missing');
     });
   });
 
@@ -300,6 +304,34 @@ describe('recordSessionCheck', () => {
       }
 
       expect(await queryLogs(env, { category: 'auth' })).toHaveLength(1);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('stops counting a loss once the client has been told', async () => {
+    const { env, cleanup } = await createTestEnv();
+    try {
+      // The request that discovers the loss still claims a session...
+      await recordSessionCheck(
+        env,
+        signedInBefore({ cookie: 'anon_id=abc', 'sec-fetch-site': 'same-site' }),
+        NO_TOKEN,
+        'user-1'
+      );
+      // ...and every app open after it arrives with the flag cleared, so the
+      // same incident is not re-counted into the verdict for weeks.
+      for (let i = 0; i < 4; i += 1) {
+        await recordSessionCheck(
+          env,
+          request({ cookie: 'anon_id=abc', 'x-client-session': 'none' }),
+          NO_TOKEN,
+          'user-1'
+        );
+      }
+
+      const entries = await queryLogs(env, { category: 'auth' });
+      expect(entries.filter((entry) => entry.level === 'warn')).toHaveLength(1);
     } finally {
       await cleanup();
     }

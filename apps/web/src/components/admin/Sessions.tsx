@@ -34,7 +34,6 @@ const UNEXPECTED = new Set([
   'unknown_token',
   'cookie_withheld_cross_site',
   'cookie_missing',
-  'cookies_cleared',
 ]);
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -58,20 +57,15 @@ const VERDICTS: Record<string, { title: string; detail: string }> = {
     detail:
       'These requests came back marked cross-site, and a SameSite=Lax cookie is withheld on those by design. The API is on a different site than the app. Set SESSION_COOKIE_SAMESITE to None (it already requires HTTPS, which COOKIE_SECURE gives you), or move the API onto the app’s own domain.',
   },
-  cookies_cleared: {
-    title: 'Whole cookie jars are being emptied',
-    detail:
-      'No cookie of any kind came back, though the app’s own stored state survived — so this was not an expiry and not a cross-site refusal. Something is clearing cookies specifically: a browser setting, a privacy tool, or the reader doing it by hand.',
-  },
   expired: {
     title: 'Sessions are reaching their expiry',
     detail:
       'The sessions were still on record and had simply run out. Compare the age each one reached against SESSION_TTL_DAYS: at the full term, the fix is a longer TTL or renewal on use; well short of it, something is writing a shorter expiry than the setting says.',
   },
   cookie_missing: {
-    title: 'The session cookie alone is disappearing',
+    title: 'The session cookie is not coming back',
     detail:
-      'Other cookies survived, so this was not a cleared jar and not a cross-site refusal — the session cookie specifically was lost. Check the Max-Age it goes out with against how long it actually lasts.',
+      'A device that had signed in returned without it, on a request the browser did not call cross-site, while the session was still on record. Check the Max-Age the cookie goes out with against how long it actually survives. The cookie names on each row say what else came back, though not whether the jar was empty before the app registered an anonymous identity ahead of this request.',
   },
   unknown_token: {
     title: 'Sessions are vanishing from the database',
