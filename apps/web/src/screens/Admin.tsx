@@ -26,6 +26,7 @@ import { Notifications } from '../components/admin/Notifications';
 import { Overview } from '../components/admin/Overview';
 import { People } from '../components/admin/People';
 import { Review } from '../components/admin/Review';
+import { Sessions } from '../components/admin/Sessions';
 import { Words } from '../components/admin/Words';
 import { AdminButton, ScreenHeader, Segmented } from '../components/admin/primitives';
 
@@ -77,6 +78,7 @@ export function Admin({ user }: AdminProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [wordsMeta, setWordsMeta] = useState('');
+  const [sessionsMeta, setSessionsMeta] = useState('');
   const [testRecipients, setTestRecipients] = useState<string[]>([]);
 
   const loadUsers = useCallback(async () => {
@@ -192,6 +194,8 @@ export function Admin({ user }: AdminProps) {
         const admins = users.filter((candidate) => candidate.isAdmin).length;
         return { title: 'People', meta: `${users.length} · ${admins} admins` };
       }
+      case 'sessions':
+        return { title: 'Sessions', meta: sessionsMeta };
     }
   };
 
@@ -259,6 +263,8 @@ export function Admin({ user }: AdminProps) {
               initialRecipients={testRecipients}
             />
           ) : null}
+
+          {view === 'sessions' ? <Sessions headerSlot={setSessionsMeta} /> : null}
 
           {view === 'people' ? (
             <People

@@ -1,8 +1,8 @@
-import { ArrowLeft, BarChart, Bell, BookOpen, CheckSquare, Users } from 'lucide-react';
+import { ArrowLeft, BarChart, Bell, BookOpen, CheckSquare, KeyRound, Users } from 'lucide-react';
 
 import { DIVIDER } from './primitives';
 
-export type AdminView = 'overview' | 'review' | 'words' | 'notifications' | 'people';
+export type AdminView = 'overview' | 'review' | 'words' | 'notifications' | 'people' | 'sessions';
 
 interface Destination {
   id: AdminView;
@@ -18,6 +18,7 @@ const DESTINATIONS: Destination[] = [
   { id: 'words', label: 'Words', shortLabel: 'Words', icon: BookOpen },
   { id: 'notifications', label: 'Notifications', shortLabel: 'Notifs', icon: Bell },
   { id: 'people', label: 'People', shortLabel: 'People', icon: Users },
+  { id: 'sessions', label: 'Sessions', shortLabel: 'Sessions', icon: KeyRound },
 ];
 
 interface AdminNavProps {

@@ -22,6 +22,7 @@ import {
 import { buildServerEvent, recordEvent } from './analytics';
 import { sendEmailCode } from './auth/email';
 import { verifyGoogleIdToken } from './auth/google';
+import { recordSessionCheck, recordSessionCleared, recordSessionCreated } from './auth/diagnostics';
 import { resolveAnonymousId, resolveUserId } from './auth/identity';
 import { mergeAnonymousIntoUser } from './auth/merge';
 import { buildExpiry, createCodeHash, generateNumericCode } from './auth/otp';
@@ -31,6 +32,7 @@ import {
   clearSession,
   createSession,
   getSessionUserId,
+  inspectSession,
   parseCookies,
 } from './auth/sessions';
 import { Env } from './env';
@@ -89,6 +91,26 @@ function appendSetCookie(
   cookie: string
 ): void {
   c.header('Set-Cookie', cookie, { append: true });
+}
+
+/**
+ * Run a side errand without holding up the response. Diagnostics write a D1
+ * row per request; a reader waiting on their word should never pay for that.
+ */
+function background(c: { executionCtx?: ExecutionContext }, work: Promise<unknown>): void {
+  const settled = work.catch(() => undefined);
+  try {
+    // Hono throws rather than returning undefined when there is no execution
+    // context, and a diagnostic is never worth failing a request over.
+    const ctx = c.executionCtx;
+    if (ctx && 'waitUntil' in ctx) {
+      ctx.waitUntil(settled);
+      return;
+    }
+  } catch {
+    // Falls through to letting the promise run unawaited.
+  }
+  void settled;
 }
 
 function normalizeKeyPart(value: string): string {
@@ -168,7 +190,10 @@ app.use('*', async (c, next) => {
     c.header('Access-Control-Allow-Origin', origin);
   }
   c.header('Access-Control-Allow-Credentials', 'true');
-  c.header('Access-Control-Allow-Headers', 'Content-Type, X-Anon-Id, X-Timezone');
+  c.header(
+    'Access-Control-Allow-Headers',
+    'Content-Type, X-Anon-Id, X-Timezone, X-Client-Session, X-Client-Display'
+  );
   c.header('Access-Control-Allow-Methods', 'GET,POST,PUT,OPTIONS');
   c.header('Vary', 'Origin', { append: true });
   if (c.req.method === 'OPTIONS') {
@@ -248,16 +273,22 @@ app.post('/api/identity/anonymous', async (c) => {
   });
 });
 
+/**
+ * The app asks this on every load to decide whether it is signed in, which
+ * makes it the one place where an unwanted sign-out is observable. Each answer
+ * is recorded with what the browser presented, so a logout that only happens
+ * on someone's phone leaves evidence behind. See `auth/diagnostics.ts`.
+ */
 app.get('/api/me', async (c) => {
   const cookieHeader = c.req.header('cookie');
   const cookies = parseCookies(cookieHeader ?? null);
   const token = cookies.session ?? null;
-  let userId: string | null = null;
-  if (token) {
-    userId = await getSessionUserId(c.env, token);
-  }
+  const lookup = await inspectSession(c.env, token);
+  const userId = lookup.outcome === 'valid' ? lookup.userId : null;
+
   if (userId) {
     const user = await getUserById(c.env, userId);
+    background(c, recordSessionCheck(c.env, c.req.raw, lookup, userId));
     return c.json({
       user_id: userId,
       is_authenticated: true,
@@ -266,6 +297,7 @@ app.get('/api/me', async (c) => {
     });
   }
   const anonId = await resolveAnonymousIdForRequest(c);
+  background(c, recordSessionCheck(c.env, c.req.raw, lookup, anonId));
   return c.json({
     user_id: anonId ?? null,
     is_authenticated: false,
@@ -777,6 +809,14 @@ app.post('/api/auth/signup', async (c) => {
 
   const session = await createSession(c.env, userId);
   appendSetCookie(c, buildSessionCookie(c.env, session.token));
+  background(
+    c,
+    recordSessionCreated(c.env, c.req.raw, {
+      userId: userId,
+      method: 'email_password',
+      expiresAt: session.expiresAt,
+    })
+  );
 
   await recordEvent(
     c.env,
@@ -846,6 +886,14 @@ app.post('/api/auth/login', async (c) => {
   }
   const session = await createSession(c.env, record.user_id as string);
   appendSetCookie(c, buildSessionCookie(c.env, session.token));
+  background(
+    c,
+    recordSessionCreated(c.env, c.req.raw, {
+      userId: record.user_id as string,
+      method: 'email_password',
+      expiresAt: session.expiresAt,
+    })
+  );
 
   await recordEvent(
     c.env,
@@ -1014,6 +1062,14 @@ app.post('/api/auth/email/code/verify', async (c) => {
 
   const session = await createSession(c.env, userId);
   appendSetCookie(c, buildSessionCookie(c.env, session.token));
+  background(
+    c,
+    recordSessionCreated(c.env, c.req.raw, {
+      userId: userId,
+      method: 'email_code',
+      expiresAt: session.expiresAt,
+    })
+  );
 
   if (createdAccount) {
     await recordEvent(
@@ -1080,6 +1136,14 @@ app.post('/api/auth/google', async (c) => {
 
   const session = await createSession(c.env, userId);
   appendSetCookie(c, buildSessionCookie(c.env, session.token));
+  background(
+    c,
+    recordSessionCreated(c.env, c.req.raw, {
+      userId: userId,
+      method: 'google',
+      expiresAt: session.expiresAt,
+    })
+  );
 
   if (createdAccount) {
     await recordEvent(
@@ -1098,8 +1162,11 @@ app.post('/api/auth/google', async (c) => {
 app.post('/api/auth/logout', async (c) => {
   const cookies = parseCookies(c.req.header('cookie') ?? null);
   const token = cookies.session ?? null;
+  const userId = await getSessionUserId(c.env, token);
   await clearSession(c.env, token);
   appendSetCookie(c, buildSessionCookie(c.env, '', { clear: true }));
+  // Recorded so a sign-out the reader asked for is never read as a failure.
+  background(c, recordSessionCleared(c.env, c.req.raw, userId));
   return c.json({ ok: true });
 });
 

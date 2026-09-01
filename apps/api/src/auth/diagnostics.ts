@@ -1,0 +1,241 @@
+import { Env } from '../env';
+import { logInfo, logWarn } from '../notifications/logger';
+import { SessionLookup, parseCookies } from './sessions';
+
+/**
+ * Why a device that was signed in stops being signed in.
+ *
+ * The symptom this exists for — "I have to log in again every couple of days"
+ * — only reproduces on a phone, where there is no way to inspect a cookie
+ * jar. So the server records what the browser presented on each request and
+ * what became of the session it named, and the admin screen reads it back.
+ *
+ * The three candidate causes leave different fingerprints, and every field
+ * here exists to separate them:
+ *
+ *   1. The cookie is never sent. `SameSite=Lax` withholds it whenever the API
+ *      is on a different site than the app, so `secFetchSite: 'cross-site'`
+ *      with no session cookie names this outright.
+ *   2. The browser threw the site's storage away (Safari/iOS does this to
+ *      sites it considers idle). Then the cookie AND the client's own
+ *      localStorage flag vanish together — `clientExpectation` is what makes
+ *      that distinguishable from cause 1.
+ *   3. The session genuinely expired. Then the row is still here and says so,
+ *      along with how many days it actually lived.
+ */
+
+/**
+ * What arrived with a request. Cookie *names* only — the session token is a
+ * live credential, and this table is rendered in the admin screen.
+ */
+export interface RequestFingerprint {
+  cookieNames: string[];
+  /** False means an empty jar, which is the shape storage eviction leaves. */
+  hadCookies: boolean;
+  /**
+   * `same-origin` | `same-site` | `cross-site` | `none`. The decisive header
+   * for cause 1: browsers set it themselves, so it reports how the browser
+   * classified the request rather than how we hoped it would.
+   */
+  secFetchSite: string | null;
+  originHost: string | null;
+  hasAnonHeader: boolean;
+  /**
+   * What the app believed before it asked. `expected` means this device
+   * completed a sign-in and never logged out, so an unauthenticated answer is
+   * a real regression rather than a stranger's first visit. When the flag
+   * itself is missing on a device we know signed in, its storage was cleared.
+   */
+  clientExpectation: 'expected' | 'none' | 'unknown';
+  /** `standalone` for an installed PWA — the configuration iOS evicts hardest. */
+  clientDisplay: string | null;
+  platform: string;
+}
+
+export type SessionOutcome =
+  /** A live session. Recorded too: a session seen on day 3 and gone on day 4 dates the loss. */
+  | 'ok'
+  /** The row was found and had passed its expiry. `livedDays` says whether that was the full TTL. */
+  | 'expired'
+  /** A cookie arrived naming a session that no longer exists: a purged row, or a rotated SESSION_SECRET. */
+  | 'unknown_token'
+  /** No session cookie on a request the browser called cross-site. Cause 1. */
+  | 'cookie_withheld_cross_site'
+  /** No session cookie, but this device kept other state — the cookie alone was lost. */
+  | 'cookie_missing'
+  /** Nothing at all came back from a device that expected to be signed in. Cause 2. */
+  | 'storage_cleared'
+  /** No session and no sign that there ever was one. The ordinary anonymous reader. */
+  | 'anonymous';
+
+function platformOf(userAgent: string | null): string {
+  if (!userAgent) return 'unknown';
+  if (/iPhone|iPad|iPod/i.test(userAgent)) return 'ios';
+  if (/Android/i.test(userAgent)) return 'android';
+  if (/Macintosh/i.test(userAgent)) return 'macos';
+  if (/Windows/i.test(userAgent)) return 'windows';
+  return 'other';
+}
+
+function expectationOf(header: string | null): RequestFingerprint['clientExpectation'] {
+  if (header === 'expected' || header === 'none') return header;
+  return 'unknown';
+}
+
+export function describeRequest(request: Request): RequestFingerprint {
+  const cookieHeader = request.headers.get('cookie');
+  const cookieNames = Object.keys(parseCookies(cookieHeader)).sort();
+  const userAgent = request.headers.get('user-agent');
+
+  let originHost: string | null = null;
+  const origin = request.headers.get('origin');
+  if (origin) {
+    try {
+      originHost = new URL(origin).host;
+    } catch {
+      originHost = 'unparseable';
+    }
+  }
+
+  return {
+    cookieNames,
+    hadCookies: cookieNames.length > 0,
+    secFetchSite: request.headers.get('sec-fetch-site'),
+    originHost,
+    hasAnonHeader: request.headers.get('x-anon-id') !== null,
+    clientExpectation: expectationOf(request.headers.get('x-client-session')),
+    clientDisplay: request.headers.get('x-client-display'),
+    platform: platformOf(userAgent),
+  };
+}
+
+export function classifyOutcome(
+  lookup: SessionLookup,
+  fingerprint: RequestFingerprint
+): SessionOutcome {
+  if (lookup.outcome === 'valid') return 'ok';
+  if (lookup.outcome === 'expired') return 'expired';
+  if (lookup.outcome === 'unknown_token') return 'unknown_token';
+
+  // No session cookie arrived. Everything below separates "the browser
+  // refused to send it" from "it is not there any more".
+  if (fingerprint.secFetchSite === 'cross-site') return 'cookie_withheld_cross_site';
+
+  const knownDevice = fingerprint.hadCookies || fingerprint.hasAnonHeader;
+  if (fingerprint.clientExpectation === 'expected') {
+    return knownDevice ? 'cookie_missing' : 'storage_cleared';
+  }
+  return knownDevice ? 'cookie_missing' : 'anonymous';
+}
+
+/** The outcomes that mean somebody was signed out without asking to be. */
+const UNEXPECTED: ReadonlySet<SessionOutcome> = new Set([
+  'expired',
+  'unknown_token',
+  'cookie_withheld_cross_site',
+  'cookie_missing',
+  'storage_cleared',
+]);
+
+const SUMMARIES: Record<SessionOutcome, string> = {
+  ok: 'Session accepted',
+  expired: 'Signed out: the session had expired',
+  unknown_token: 'Signed out: the session cookie named a session that no longer exists',
+  cookie_withheld_cross_site:
+    'Signed out: the browser withheld the session cookie on a cross-site request',
+  cookie_missing: 'Signed out: the session cookie was gone, other site data was not',
+  storage_cleared: 'Signed out: the browser had cleared this site’s storage',
+  anonymous: 'Anonymous reader, no session expected',
+};
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function daysBetween(fromIso: string, toMs: number): number | null {
+  const from = Date.parse(fromIso);
+  if (!Number.isFinite(from)) return null;
+  return Math.round(((toMs - from) / DAY_MS) * 10) / 10;
+}
+
+/**
+ * Record one authentication check. Fire this through `waitUntil` — it writes a
+ * D1 row and the reader should never wait on a diagnostic.
+ */
+export async function recordSessionCheck(
+  env: Env,
+  request: Request,
+  lookup: SessionLookup,
+  userId: string | null
+): Promise<void> {
+  const fingerprint = describeRequest(request);
+  const outcome = classifyOutcome(lookup, fingerprint);
+  const now = Date.now();
+
+  const metadata: Record<string, unknown> = {
+    outcome,
+    ...fingerprint,
+    // What the cookie was issued with, so a fingerprint can be read against
+    // the policy that produced it rather than against an assumption.
+    cookiePolicy: {
+      sameSite: env.SESSION_COOKIE_SAMESITE || 'Lax',
+      secure: env.COOKIE_SECURE === 'true',
+      ttlDays: Number(env.SESSION_TTL_DAYS || '30'),
+    },
+  };
+
+  if (lookup.outcome === 'valid' || lookup.outcome === 'expired') {
+    metadata.sessionCreatedAt = lookup.createdAt;
+    metadata.sessionExpiresAt = lookup.expiresAt;
+    // How long the session lasted in practice. A TTL of 30 that dies at 2 is
+    // the whole question, and this is the number that answers it.
+    metadata.ageDays = daysBetween(lookup.createdAt, now);
+  }
+
+  const level = UNEXPECTED.has(outcome) ? logWarn : logInfo;
+  await level(env, 'auth', SUMMARIES[outcome], metadata, userId ?? undefined);
+}
+
+/**
+ * Record a sign-in. This is the anchor every later check is read against: it
+ * dates the session and states the cookie policy it was issued under.
+ */
+export async function recordSessionCreated(
+  env: Env,
+  request: Request,
+  params: { userId: string; method: string; expiresAt: string }
+): Promise<void> {
+  await logInfo(
+    env,
+    'auth',
+    `Signed in with ${params.method}`,
+    {
+      outcome: 'signed_in',
+      method: params.method,
+      sessionExpiresAt: params.expiresAt,
+      ...describeRequest(request),
+      cookiePolicy: {
+        sameSite: env.SESSION_COOKIE_SAMESITE || 'Lax',
+        secure: env.COOKIE_SECURE === 'true',
+        ttlDays: Number(env.SESSION_TTL_DAYS || '30'),
+      },
+    },
+    params.userId
+  );
+}
+
+/**
+ * Record a deliberate sign-out, so that a logout the user actually asked for
+ * is never mistaken for one of the failures above.
+ */
+export async function recordSessionCleared(
+  env: Env,
+  request: Request,
+  userId: string | null
+): Promise<void> {
+  await logInfo(
+    env,
+    'auth',
+    'Signed out at the reader’s request',
+    { outcome: 'signed_out', ...describeRequest(request) },
+    userId ?? undefined
+  );
+}
