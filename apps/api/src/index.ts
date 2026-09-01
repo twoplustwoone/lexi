@@ -294,6 +294,16 @@ app.get('/api/me', async (c) => {
   const lookup = await inspectSession(c.env, token);
   const userId = lookup.outcome === 'valid' ? lookup.userId : null;
 
+  // A token that names a dead or unknown session is discarded as soon as it is
+  // seen. This is what keeps one lost session from being written down over and
+  // over: the cookie deliberately outlives the row so the expiry can be
+  // observed once, and clearing it here is the other half of that bargain —
+  // without it the browser would present the same dead token on every app open
+  // for a fortnight, and one reader would outweigh every other in the records.
+  if (lookup.outcome === 'expired' || lookup.outcome === 'unknown_token') {
+    appendSetCookie(c, buildSessionCookie(c.env, '', { clear: true }));
+  }
+
   if (userId) {
     const user = await getUserById(c.env, userId);
     background(c, recordSessionCheck(c.env, c.req.raw, lookup, userId));

@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
 
+import {
+  SessionDiagnosis,
+  SessionEvidence,
+  SessionObservation,
+  diagnoseSession,
+  isUnwantedSessionLoss,
+} from '@word-of-the-day/shared';
+
 import { AdminLogEntry, fetchAdminLogsSince } from '../../api';
 import { formatDateTime } from './format';
 import { DIVIDER, ErrorLine, LoadingLine, SectionLabel, StatusEnum } from './primitives';
@@ -8,17 +16,20 @@ import { DIVIDER, ErrorLine, LoadingLine, SectionLabel, StatusEnum } from './pri
  * Why people are being signed out.
  *
  * A sign-out that only happens on a phone cannot be chased with a debugger, so
- * the API records what the browser presented on every `/api/me` and what
- * became of the session it named. This screen reads those records back and
- * says which cause they point at. The evidence is the list; the verdict above
- * it is only ever a reading of the list.
+ * the API records what each request presented and what became of the session
+ * it named. Those records state observations only. Turning them into an
+ * explanation is `diagnoseSession`, and this screen is where that runs — over
+ * evidence that is still intact, rather than a conclusion frozen into a row.
  *
- * Two kinds of evidence, and the difference matters. Most causes are witnessed
- * outright — the record says what happened. Storage eviction cannot be: it
- * takes the cookie and the app's own flag together and leaves a device
- * indistinguishable from a first-time visitor. All it leaves is a session that
- * stops being presented while it is still valid, which is why that is computed
- * here across records rather than claimed by any one of them.
+ * Every reading here carries its standing: whether the evidence admits one
+ * explanation or several. A shortlist honestly labelled is worth more than a
+ * confident answer that sends someone to change the wrong setting.
+ *
+ * Storage eviction is the one cause no record can witness — it takes the
+ * cookie and the app's own flag together and leaves a device identical to a
+ * first-time visitor. What it leaves instead is a session that stops being
+ * presented while still valid, computed below across records, and claimed
+ * nowhere else.
  */
 
 type Window = '7d' | '30d';
@@ -27,14 +38,6 @@ const WINDOWS: Array<{ value: Window; label: string; days: number }> = [
   { value: '7d', label: '7 days', days: 7 },
   { value: '30d', label: '30 days', days: 30 },
 ];
-
-/** The outcomes that mean somebody lost a session they had not given up. */
-const UNEXPECTED = new Set([
-  'expired',
-  'unknown_token',
-  'cookie_withheld_cross_site',
-  'cookie_missing',
-]);
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -46,39 +49,13 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  */
 const QUIET_MS = 3 * DAY_MS;
 
-/**
- * What each outcome means and what would actually change it. Every verdict
- * names a specific next move — a diagnosis that ends in "investigate further"
- * is the state this screen exists to get out of.
- */
-const VERDICTS: Record<string, { title: string; detail: string }> = {
-  cookie_withheld_cross_site: {
-    title: 'The browser is refusing to send the session cookie',
-    detail:
-      'These requests came back marked cross-site, and a SameSite=Lax cookie is withheld on those by design. The API is on a different site than the app. Set SESSION_COOKIE_SAMESITE to None (it already requires HTTPS, which COOKIE_SECURE gives you), or move the API onto the app’s own domain.',
-  },
-  expired: {
-    title: 'Sessions are reaching their expiry',
-    detail:
-      'The sessions were still on record and had simply run out. Compare the age each one reached against SESSION_TTL_DAYS: at the full term, the fix is a longer TTL or renewal on use; well short of it, something is writing a shorter expiry than the setting says.',
-  },
-  cookie_missing: {
-    title: 'The session cookie is not coming back',
-    detail:
-      'A device that had signed in returned without it, on a request the browser did not call cross-site, while the session was still on record. Check the Max-Age the cookie goes out with against how long it actually survives. The cookie names on each row say what else came back, though not whether the jar was empty before the app registered an anonymous identity ahead of this request.',
-  },
-  unknown_token: {
-    title: 'Sessions are vanishing from the database',
-    detail:
-      'A valid-looking cookie named a session with no row behind it. Either the row was deleted, or SESSION_SECRET changed — every session hash is derived from it, so rotating it signs everybody out at once.',
-  },
-};
-
-/** The reading when nothing was witnessed but sessions stopped being used. */
-const QUIET_VERDICT = {
-  title: 'Sessions are going quiet while still valid',
-  detail:
-    'Nothing was witnessed being taken away — but sessions stopped being presented well before they expired, with no sign-out recorded. That is the trace storage eviction leaves: the browser clears the site, and the next visit is indistinguishable from a stranger’s. It is also what someone simply not opening the app looks like, so read it alongside whether these readers came back at all.',
+/** The reading when nothing was observed but sessions stopped being used. */
+const QUIET_READING: SessionDiagnosis = {
+  statement:
+    'Sessions are going quiet while still valid: they stopped being presented well before they expired, with no sign-out recorded.',
+  standing: 'narrowed',
+  nextStep:
+    'That is the trace storage eviction leaves — the browser clears the site, and the next visit is indistinguishable from a stranger\u2019s. It is equally what someone who stopped opening the app looks like, so read it alongside whether these readers came back at all.',
 };
 
 function metadataOf(entry: AdminLogEntry): Record<string, unknown> {
@@ -88,6 +65,19 @@ function metadataOf(entry: AdminLogEntry): Record<string, unknown> {
 function outcomeOf(entry: AdminLogEntry): string {
   const outcome = metadataOf(entry).outcome;
   return typeof outcome === 'string' ? outcome : 'unknown';
+}
+
+/** The recorded facts, in the shape the shared reading expects. */
+function evidenceOf(entry: AdminLogEntry): SessionEvidence {
+  const metadata = metadataOf(entry);
+  const policy = (metadata.cookiePolicy ?? {}) as { sameSite?: string; ttlDays?: number };
+  return {
+    observation: outcomeOf(entry) as SessionObservation,
+    secFetchSite: typeof metadata.secFetchSite === 'string' ? metadata.secFetchSite : null,
+    sameSite: typeof policy.sameSite === 'string' ? policy.sameSite : null,
+    ageDays: typeof metadata.ageDays === 'number' ? metadata.ageDays : null,
+    ttlDays: typeof policy.ttlDays === 'number' ? policy.ttlDays : null,
+  };
 }
 
 function stringField(entry: AdminLogEntry, key: string): string | null {
@@ -206,22 +196,33 @@ export function Sessions({ headerSlot }: { headerSlot: (meta: string) => void })
   }, [load]);
 
   const signOuts = useMemo(
-    () => entries.filter((entry) => UNEXPECTED.has(outcomeOf(entry))),
+    () => entries.filter((entry) => isUnwantedSessionLoss(outcomeOf(entry))),
     [entries]
   );
 
   const quiet = useMemo(() => quietSessions(entries, Date.now()), [entries]);
 
-  /** The most common witnessed cause, if anything was witnessed at all. */
+  /**
+   * The reading that accounts for most of the losses.
+   *
+   * Grouped by what the evidence says, not by the observation: two rows can
+   * both be a missing cookie and mean different things, and rows that mean the
+   * same thing belong together however they were observed.
+   */
   const reading = useMemo(() => {
-    const counts = new Map<string, number>();
+    const groups = new Map<string, { diagnosis: SessionDiagnosis; count: number }>();
     for (const entry of signOuts) {
-      const outcome = outcomeOf(entry);
-      counts.set(outcome, (counts.get(outcome) ?? 0) + 1);
+      const diagnosis = diagnoseSession(evidenceOf(entry));
+      const group = groups.get(diagnosis.statement);
+      if (group) {
+        group.count += 1;
+      } else {
+        groups.set(diagnosis.statement, { diagnosis, count: 1 });
+      }
     }
-    let top: { outcome: string; count: number } | null = null;
-    for (const [outcome, count] of counts) {
-      if (!top || count > top.count) top = { outcome, count };
+    let top: { diagnosis: SessionDiagnosis; count: number } | null = null;
+    for (const group of groups.values()) {
+      if (!top || group.count > top.count) top = group;
     }
     return top;
   }, [signOuts]);
@@ -237,7 +238,7 @@ export function Sessions({ headerSlot }: { headerSlot: (meta: string) => void })
     );
   }, [headerSlot, signOuts.length, quiet.length, days, loading]);
 
-  const verdict = reading ? VERDICTS[reading.outcome] : quiet.length > 0 ? QUIET_VERDICT : null;
+  const shown = reading?.diagnosis ?? (quiet.length > 0 ? QUIET_READING : null);
 
   return (
     <>
@@ -269,21 +270,28 @@ export function Sessions({ headerSlot }: { headerSlot: (meta: string) => void })
             <p className="m-0 text-[15px] text-ink/[0.66]">
               Nothing recorded yet. The next time the app is opened it will start writing here.
             </p>
-          ) : !verdict ? (
+          ) : !shown ? (
             <p className="m-0 text-[15px] text-ink/[0.66]">
               No unwanted sign-outs in this window — every session was either accepted, still in
               use, or ended by someone signing out.
             </p>
           ) : (
             <div className={`rounded-md border px-4 py-4 lg:px-5 ${DIVIDER}`}>
-              <p className="m-0 text-[17px] leading-[1.4]">{verdict.title}</p>
-              <p className="mb-0 mt-2 text-[14px] leading-[1.6] text-ink/[0.68]">
-                {verdict.detail}
-              </p>
+              <p className="m-0 text-[17px] leading-[1.4]">{shown.statement}</p>
+              {shown.nextStep ? (
+                <p className="mb-0 mt-2 text-[14px] leading-[1.6] text-ink/[0.68]">
+                  {shown.nextStep}
+                </p>
+              ) : null}
               <p className="mb-0 mt-3 text-[13px] text-ink/[0.52]">
+                {/* Said plainly, because reading a shortlist as an answer is
+                    how the wrong setting gets changed. */}
+                {shown.standing === 'determined'
+                  ? 'The evidence admits one explanation.'
+                  : 'Several explanations remain — the evidence narrows it to these.'}{' '}
                 {reading
-                  ? `${reading.count} of ${signOuts.length} witnessed sign-outs in the last ${days} days.`
-                  : `${quiet.length} ${quiet.length === 1 ? 'session' : 'sessions'} went quiet in the last ${days} days, with none witnessed being taken away.`}
+                  ? `${reading.count} of ${signOuts.length} losses in the last ${days} days.`
+                  : `${quiet.length} ${quiet.length === 1 ? 'session' : 'sessions'} went quiet in the last ${days} days, with no loss recorded.`}
               </p>
             </div>
           )}

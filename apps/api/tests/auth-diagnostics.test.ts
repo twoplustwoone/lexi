@@ -1,16 +1,19 @@
 import { DateTime } from 'luxon';
 import { describe, expect, it } from 'vitest';
 
-import { classifyOutcome, describeRequest, recordSessionCheck } from '../src/auth/diagnostics';
+import { describeRequest, observeSession, recordSessionCheck } from '../src/auth/diagnostics';
 import {
   buildSessionCookie,
   createSession,
   inspectSession,
   purgeExpiredSessions,
 } from '../src/auth/sessions';
+import worker from '../src/index';
 import { logInfo, purgeExpiredAuthLogs, queryLogs } from '../src/notifications/logger';
 import { hashToken } from '../src/utils/crypto';
 import { createTestEnv } from './helpers';
+
+type TestEnv = Awaited<ReturnType<typeof createTestEnv>>['env'];
 
 function request(headers: Record<string, string>): Request {
   return new Request('http://localhost/api/me', { headers });
@@ -21,9 +24,17 @@ function signedInBefore(extra: Record<string, string> = {}): Request {
   return request({ 'x-client-session': 'expected', ...extra });
 }
 
+function executionContext(): ExecutionContext {
+  return {
+    props: {},
+    waitUntil: () => {},
+    passThroughOnException: () => {},
+  } as unknown as ExecutionContext;
+}
+
 const NO_TOKEN = { outcome: 'no_token' } as const;
 
-async function createUser(env: Awaited<ReturnType<typeof createTestEnv>>['env'], id = 'user-1') {
+async function createUser(env: TestEnv, id = 'user-1') {
   await env.DB.prepare(
     'INSERT INTO users (id, timezone, is_anonymous, preferences_json, created_at) VALUES (?, ?, 1, ?, ?)'
   )
@@ -56,71 +67,65 @@ describe('describeRequest', () => {
     expect(fingerprint.clientExpectation).toBe('expected');
     expect(fingerprint.clientDisplay).toBe('standalone');
     expect(fingerprint.platform).toBe('ios');
-    expect(fingerprint.hadCookies).toBe(false);
   });
 });
 
-describe('classifyOutcome', () => {
-  describe('a device that never signed in is never a sign-out', () => {
-    // Each of these would otherwise be counted as an incident, and readers who
-    // never sign in are the overwhelming majority of requests.
-
+/**
+ * Everything this returns has to be true by construction. The moment a value
+ * here encodes a judgement about *why* — which cookie policy was at fault,
+ * which storage the browser cleared — it is a guess written permanently into
+ * an append-only table. Those judgements belong to `diagnoseSession`.
+ */
+describe('observeSession', () => {
+  describe('a device that never claimed a session is never a loss', () => {
     it('does not report a first-time reader', () => {
-      expect(classifyOutcome(NO_TOKEN, describeRequest(request({})))).toBe('anonymous');
+      expect(observeSession(NO_TOKEN, describeRequest(request({})))).toBe('anonymous');
     });
 
     it('does not report one whose request the browser calls cross-site', () => {
       // The deployment where cross-site diagnosis matters is exactly the one
       // where every stranger's request looks like this.
       const stranger = describeRequest(request({ 'sec-fetch-site': 'cross-site' }));
-      expect(classifyOutcome(NO_TOKEN, stranger)).toBe('anonymous');
+      expect(observeSession(NO_TOKEN, stranger)).toBe('anonymous');
     });
 
     it('does not report one carrying an anonymous cookie', () => {
-      // /api/me hands every anonymous reader an anon_id, so from their second
-      // request onwards they arrive with cookies but no session.
       const returning = describeRequest(
         request({ cookie: 'anon_id=abc', 'sec-fetch-site': 'same-site' })
       );
-      expect(classifyOutcome(NO_TOKEN, returning)).toBe('anonymous');
+      expect(observeSession(NO_TOKEN, returning)).toBe('anonymous');
     });
 
     it('does not report one that has signed out', () => {
       const signedOut = describeRequest(
         request({ cookie: 'anon_id=abc', 'x-client-session': 'none' })
       );
-      expect(classifyOutcome(NO_TOKEN, signedOut)).toBe('anonymous');
+      expect(observeSession(NO_TOKEN, signedOut)).toBe('anonymous');
     });
   });
 
-  describe('a device that had signed in', () => {
-    it('names a cross-site refusal', () => {
-      const fingerprint = describeRequest(signedInBefore({ 'sec-fetch-site': 'cross-site' }));
-      expect(classifyOutcome(NO_TOKEN, fingerprint)).toBe('cookie_withheld_cross_site');
-    });
+  it('states only that the cookie did not come back, whatever the request looked like', () => {
+    // Whether SameSite withheld it depends on the policy the cookie carries as
+    // much as on the request, so that pairing is not decided here. All three
+    // are the same observation; the evidence that separates them is recorded
+    // alongside and weighed at reading time.
+    const crossSite = describeRequest(signedInBefore({ 'sec-fetch-site': 'cross-site' }));
+    const sameSite = describeRequest(
+      signedInBefore({ cookie: 'anon_id=abc', 'sec-fetch-site': 'same-site' })
+    );
+    const emptyJar = describeRequest(signedInBefore({ 'sec-fetch-site': 'same-site' }));
 
-    it('reports a missing session cookie without reading the rest of the jar', () => {
-      // The app registers an anonymous identity before it asks /api/me, and
-      // that endpoint always sets an anon_id, so the jar is refilled before
-      // this request arrives. Whether the reader had emptied it is no longer
-      // visible, and both of these are the same observation.
-      const sessionOnly = describeRequest(
-        signedInBefore({ cookie: 'anon_id=abc', 'sec-fetch-site': 'same-site' })
-      );
-      expect(classifyOutcome(NO_TOKEN, sessionOnly)).toBe('cookie_missing');
-
-      const emptyJar = describeRequest(signedInBefore({ 'sec-fetch-site': 'same-site' }));
-      expect(classifyOutcome(NO_TOKEN, emptyJar)).toBe('cookie_missing');
-    });
+    expect(observeSession(NO_TOKEN, crossSite)).toBe('no_session_cookie');
+    expect(observeSession(NO_TOKEN, sameSite)).toBe('no_session_cookie');
+    expect(observeSession(NO_TOKEN, emptyJar)).toBe('no_session_cookie');
   });
 
-  it('trusts the row over the client for outcomes the server can prove', () => {
-    // Storage eviction takes the client's flag with the cookie, so a real
-    // sign-out can arrive claiming nothing. An expired or unrecognised row is
-    // the server's own evidence that a session existed, and still counts.
+  it('trusts the row over the client for what the server can prove', () => {
+    // Storage eviction takes the client's flag with the cookie, so a real loss
+    // can arrive claiming nothing. A row is the server's own evidence.
     const noClaim = describeRequest(request({ cookie: 'session=x' }));
     expect(
-      classifyOutcome(
+      observeSession(
         {
           outcome: 'expired',
           sessionId: 's1',
@@ -131,7 +136,108 @@ describe('classifyOutcome', () => {
         noClaim
       )
     ).toBe('expired');
-    expect(classifyOutcome({ outcome: 'unknown_token' }, noClaim)).toBe('unknown_token');
+    expect(observeSession({ outcome: 'unknown_token' }, noClaim)).toBe('unknown_token');
+  });
+});
+
+/**
+ * A session is lost once. Every mechanism below exists so that it is written
+ * down once — otherwise one reader's repeated app opens outweigh everyone
+ * else's and decide what the screen says.
+ */
+describe('one loss, one record', () => {
+  it('discards a dead cookie so the same loss cannot be seen twice', async () => {
+    const { env, cleanup } = await createTestEnv();
+    try {
+      await createUser(env);
+      const session = await createSession(env, 'user-1');
+      await env.DB.prepare('UPDATE sessions SET expires_at = ? WHERE id = ?')
+        .bind(DateTime.utc().minus({ hours: 1 }).toISO(), session.id)
+        .run();
+
+      const response = await worker.fetch(
+        new Request('http://localhost/api/me', {
+          headers: { cookie: `session=${session.token}`, 'x-client-session': 'expected' },
+        }),
+        env,
+        executionContext()
+      );
+
+      expect(response.status).toBe(200);
+      // The cookie deliberately outlives the row so the expiry can be seen
+      // once. Clearing it here is the other half: without this the browser
+      // would present the same dead token on every app open for a fortnight.
+      const setCookie = response.headers.get('Set-Cookie') ?? '';
+      expect(setCookie).toContain('session=;');
+      expect(setCookie).toContain('Max-Age=0');
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('does not record anonymous readers at all', async () => {
+    const { env, cleanup } = await createTestEnv();
+    try {
+      for (let i = 0; i < 5; i += 1) {
+        await recordSessionCheck(env, request({ 'sec-fetch-site': 'same-origin' }), NO_TOKEN, null);
+      }
+
+      // They support no diagnosis — no session, no session id, nothing lost —
+      // and they are the bulk of all traffic, so recording them would push the
+      // records that matter out of every window that reads them.
+      expect(await queryLogs(env, { category: 'auth' })).toHaveLength(0);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('records an accepted session once, not once per app open', async () => {
+    const { env, cleanup } = await createTestEnv();
+    try {
+      const lookup = {
+        outcome: 'valid',
+        sessionId: 's1',
+        userId: 'user-1',
+        createdAt: DateTime.utc().minus({ days: 1 }).toISO() as string,
+        expiresAt: DateTime.utc().plus({ days: 29 }).toISO() as string,
+      } as const;
+
+      for (let i = 0; i < 5; i += 1) {
+        await recordSessionCheck(env, request({ cookie: 'session=x' }), lookup, 'user-1');
+      }
+
+      expect(await queryLogs(env, { category: 'auth' })).toHaveLength(1);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('stops counting a loss once the client has been told', async () => {
+    const { env, cleanup } = await createTestEnv();
+    try {
+      // The request that discovers the loss still claims a session...
+      await recordSessionCheck(
+        env,
+        signedInBefore({ cookie: 'anon_id=abc', 'sec-fetch-site': 'same-site' }),
+        NO_TOKEN,
+        'user-1'
+      );
+      // ...and every app open after it arrives with the claim dropped.
+      for (let i = 0; i < 4; i += 1) {
+        await recordSessionCheck(
+          env,
+          request({ cookie: 'anon_id=abc', 'x-client-session': 'none' }),
+          NO_TOKEN,
+          'user-1'
+        );
+      }
+
+      const entries = await queryLogs(env, { category: 'auth' });
+      expect(entries).toHaveLength(1);
+      expect(entries[0].level).toBe('warn');
+    } finally {
+      await cleanup();
+    }
   });
 });
 
@@ -164,7 +270,6 @@ describe('the session cookie outlives the session', () => {
       const { getSessionUserId } = await import('../src/auth/sessions');
       expect(await getSessionUserId(env, session.token)).toBeNull();
 
-      // ...but the row is still there to say how long it lasted.
       const lookup = await inspectSession(env, session.token);
       expect(lookup.outcome).toBe('expired');
       expect(lookup).toMatchObject({ userId: 'user-1' });
@@ -202,7 +307,9 @@ describe('purgeExpiredSessions', () => {
             id,
             'user-1',
             hashToken(id, env.SESSION_SECRET),
-            DateTime.utc().minus({ days: expiredDaysAgo + 30 }).toISO(),
+            DateTime.utc()
+              .minus({ days: expiredDaysAgo + 30 })
+              .toISO(),
             DateTime.utc().minus({ days: expiredDaysAgo }).toISO()
           )
           .run();
@@ -244,7 +351,7 @@ describe('purgeExpiredAuthLogs', () => {
 });
 
 describe('recordSessionCheck', () => {
-  it('writes a readable record with the age the session reached', async () => {
+  it('writes the evidence a reading needs, and the age the session reached', async () => {
     const { env, cleanup } = await createTestEnv();
     try {
       await recordSessionCheck(
@@ -267,91 +374,10 @@ describe('recordSessionCheck', () => {
       const metadata = JSON.parse(entry.metadata_json ?? '{}');
       expect(metadata.outcome).toBe('expired');
       expect(metadata.ageDays).toBeCloseTo(2, 0);
-      // The policy the cookie was issued under, so the record can be read
-      // against it rather than against an assumption about it.
+      // Without the policy alongside, a reading cannot tell a cookie SameSite
+      // withheld from one that was blocked or already gone.
       expect(metadata.cookiePolicy).toEqual({ sameSite: 'Lax', secure: false, ttlDays: 30 });
-    } finally {
-      await cleanup();
-    }
-  });
-
-  it('logs an ordinary anonymous visit without raising a warning', async () => {
-    const { env, cleanup } = await createTestEnv();
-    try {
-      await recordSessionCheck(env, request({ 'sec-fetch-site': 'same-origin' }), NO_TOKEN, null);
-
-      const [entry] = await queryLogs(env, { category: 'auth' });
-      expect(entry.level).toBe('info');
-      expect(JSON.parse(entry.metadata_json ?? '{}').outcome).toBe('anonymous');
-    } finally {
-      await cleanup();
-    }
-  });
-
-  it('records an accepted session once, not once per app open', async () => {
-    const { env, cleanup } = await createTestEnv();
-    try {
-      const lookup = {
-        outcome: 'valid',
-        sessionId: 's1',
-        userId: 'user-1',
-        createdAt: DateTime.utc().minus({ days: 1 }).toISO() as string,
-        expiresAt: DateTime.utc().plus({ days: 29 }).toISO() as string,
-      } as const;
-
-      for (let i = 0; i < 5; i += 1) {
-        await recordSessionCheck(env, request({ cookie: 'session=x' }), lookup, 'user-1');
-      }
-
-      expect(await queryLogs(env, { category: 'auth' })).toHaveLength(1);
-    } finally {
-      await cleanup();
-    }
-  });
-
-  it('stops counting a loss once the client has been told', async () => {
-    const { env, cleanup } = await createTestEnv();
-    try {
-      // The request that discovers the loss still claims a session...
-      await recordSessionCheck(
-        env,
-        signedInBefore({ cookie: 'anon_id=abc', 'sec-fetch-site': 'same-site' }),
-        NO_TOKEN,
-        'user-1'
-      );
-      // ...and every app open after it arrives with the flag cleared, so the
-      // same incident is not re-counted into the verdict for weeks.
-      for (let i = 0; i < 4; i += 1) {
-        await recordSessionCheck(
-          env,
-          request({ cookie: 'anon_id=abc', 'x-client-session': 'none' }),
-          NO_TOKEN,
-          'user-1'
-        );
-      }
-
-      const entries = await queryLogs(env, { category: 'auth' });
-      expect(entries.filter((entry) => entry.level === 'warn')).toHaveLength(1);
-    } finally {
-      await cleanup();
-    }
-  });
-
-  it('never throttles a sign-out away', async () => {
-    const { env, cleanup } = await createTestEnv();
-    try {
-      for (let i = 0; i < 3; i += 1) {
-        await recordSessionCheck(
-          env,
-          signedInBefore({ cookie: 'anon_id=abc', 'sec-fetch-site': 'same-site' }),
-          NO_TOKEN,
-          'user-1'
-        );
-      }
-
-      const entries = await queryLogs(env, { category: 'auth' });
-      expect(entries).toHaveLength(3);
-      expect(entries.every((entry) => entry.level === 'warn')).toBe(true);
+      expect(metadata.secFetchSite).toBe('same-site');
     } finally {
       await cleanup();
     }
