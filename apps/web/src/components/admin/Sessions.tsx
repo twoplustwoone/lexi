@@ -5,10 +5,14 @@ import {
   SessionEvidence,
   SessionObservation,
   diagnoseSession,
-  isUnwantedSessionLoss,
 } from '@word-of-the-day/shared';
 
-import { AdminLogEntry, fetchAdminLogsSince } from '../../api';
+import {
+  QuietSessionRecord,
+  SessionDiagnosticsResponse,
+  SessionLossRecord,
+  fetchSessionDiagnostics,
+} from '../../api';
 import { formatDateTime } from './format';
 import { DIVIDER, ErrorLine, LoadingLine, SectionLabel, StatusEnum } from './primitives';
 
@@ -21,15 +25,13 @@ import { DIVIDER, ErrorLine, LoadingLine, SectionLabel, StatusEnum } from './pri
  * explanation is `diagnoseSession`, and this screen is where that runs — over
  * evidence that is still intact, rather than a conclusion frozen into a row.
  *
- * Every reading here carries its standing: whether the evidence admits one
- * explanation or several. A shortlist honestly labelled is worth more than a
- * confident answer that sends someone to change the wrong setting.
+ * Every reading carries its standing: whether the evidence admits one
+ * explanation or several. That distinction is the point. A shortlist read as
+ * an answer is how someone ends up changing a setting that was never at fault.
  *
- * Storage eviction is the one cause no record can witness — it takes the
- * cookie and the app's own flag together and leaves a device identical to a
- * first-time visitor. What it leaves instead is a session that stops being
- * presented while still valid, computed below across records, and claimed
- * nowhere else.
+ * The API does the summarising. This screen used to page the raw log into the
+ * browser and aggregate here, which put a row cap between it and the window it
+ * claimed to show.
  */
 
 type Window = '7d' | '30d';
@@ -39,54 +41,39 @@ const WINDOWS: Array<{ value: Window; label: string; days: number }> = [
   { value: '30d', label: '30 days', days: 30 },
 ];
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-
-/**
- * How long a session must go unseen to count as having gone quiet. Accepted
- * sessions are recorded at most every six hours, so anyone opening the app
- * daily leaves a daily trace — three days of silence is a real absence, not a
- * gap in the sampling.
- */
-const QUIET_MS = 3 * DAY_MS;
-
 /** The reading when nothing was observed but sessions stopped being used. */
 const QUIET_READING: SessionDiagnosis = {
   statement:
     'Sessions are going quiet while still valid: they stopped being presented well before they expired, with no sign-out recorded.',
   standing: 'narrowed',
   nextStep:
-    'That is the trace storage eviction leaves — the browser clears the site, and the next visit is indistinguishable from a stranger\u2019s. It is equally what someone who stopped opening the app looks like, so read it alongside whether these readers came back at all.',
+    'That is the trace storage eviction leaves — the browser clears the site, and the next visit is indistinguishable from a stranger’s. It is equally what someone who stopped opening the app looks like, so read it alongside whether these readers came back at all.',
 };
 
-function metadataOf(entry: AdminLogEntry): Record<string, unknown> {
-  return entry.metadata ?? {};
+function metadataOf(loss: SessionLossRecord): Record<string, unknown> {
+  return loss.metadata ?? {};
 }
 
-function outcomeOf(entry: AdminLogEntry): string {
-  const outcome = metadataOf(entry).outcome;
+function observationOf(loss: SessionLossRecord): string {
+  const outcome = metadataOf(loss).outcome;
   return typeof outcome === 'string' ? outcome : 'unknown';
 }
 
 /** The recorded facts, in the shape the shared reading expects. */
-function evidenceOf(entry: AdminLogEntry): SessionEvidence {
-  const metadata = metadataOf(entry);
-  const policy = (metadata.cookiePolicy ?? {}) as { sameSite?: string; ttlDays?: number };
+function evidenceOf(loss: SessionLossRecord): SessionEvidence {
+  const metadata = metadataOf(loss);
+  const policy = (metadata.configuredPolicy ?? {}) as { sameSite?: string };
   return {
-    observation: outcomeOf(entry) as SessionObservation,
+    observation: observationOf(loss) as SessionObservation,
     secFetchSite: typeof metadata.secFetchSite === 'string' ? metadata.secFetchSite : null,
-    sameSite: typeof policy.sameSite === 'string' ? policy.sameSite : null,
+    configuredSameSite: typeof policy.sameSite === 'string' ? policy.sameSite : null,
     ageDays: typeof metadata.ageDays === 'number' ? metadata.ageDays : null,
-    ttlDays: typeof policy.ttlDays === 'number' ? policy.ttlDays : null,
+    termDays: typeof metadata.termDays === 'number' ? metadata.termDays : null,
   };
 }
 
-function stringField(entry: AdminLogEntry, key: string): string | null {
-  const value = metadataOf(entry)[key];
-  return typeof value === 'string' ? value : null;
-}
-
-function detailOf(entry: AdminLogEntry): string[] {
-  const metadata = metadataOf(entry);
+function detailOf(loss: SessionLossRecord): string[] {
+  const metadata = metadataOf(loss);
   const parts: string[] = [];
 
   const site = metadata.secFetchSite;
@@ -109,69 +96,8 @@ function detailOf(entry: AdminLogEntry): string[] {
   return parts;
 }
 
-interface QuietSession {
-  sessionId: string;
-  lastSeen: string;
-  expiresAt: string;
-  daysLeftWhenLastSeen: number;
-}
-
-/**
- * Sessions last seen long ago that had plenty of life left, and were never
- * signed out. Eviction cannot be caught in the act, so it is inferred from the
- * silence it leaves behind.
- */
-function quietSessions(entries: AdminLogEntry[], now: number): QuietSession[] {
-  const seen = new Map<string, { lastSeen: number; expiresAt: string }>();
-  const abandoned = new Set<string>();
-
-  for (const entry of entries) {
-    const sessionId = stringField(entry, 'sessionId');
-    if (!sessionId) continue;
-
-    if (outcomeOf(entry) === 'signed_out') {
-      abandoned.add(sessionId);
-      continue;
-    }
-
-    const expiresAt = stringField(entry, 'sessionExpiresAt');
-    if (!expiresAt) continue;
-
-    const at = Date.parse(entry.timestamp);
-    if (Number.isNaN(at)) continue;
-
-    const existing = seen.get(sessionId);
-    if (!existing || at > existing.lastSeen) {
-      seen.set(sessionId, { lastSeen: at, expiresAt });
-    }
-  }
-
-  const quiet: QuietSession[] = [];
-  for (const [sessionId, record] of seen) {
-    if (abandoned.has(sessionId)) continue;
-
-    const expiresAt = Date.parse(record.expiresAt);
-    if (Number.isNaN(expiresAt)) continue;
-
-    const silentFor = now - record.lastSeen;
-    const lifeLeft = expiresAt - record.lastSeen;
-    // Silent for a while, and with real time still on the clock when it went
-    // silent — otherwise this is just a session running out, which is witnessed.
-    if (silentFor < QUIET_MS || lifeLeft < QUIET_MS) continue;
-
-    quiet.push({
-      sessionId,
-      lastSeen: new Date(record.lastSeen).toISOString(),
-      expiresAt: record.expiresAt,
-      daysLeftWhenLastSeen: Math.round(lifeLeft / DAY_MS),
-    });
-  }
-
-  return quiet.sort((a, b) => b.lastSeen.localeCompare(a.lastSeen));
-}
-
 export function Sessions({ headerSlot }: { headerSlot: (meta: string) => void }) {
-  const [entries, setEntries] = useState<AdminLogEntry[]>([]);
+  const [data, setData] = useState<SessionDiagnosticsResponse | null>(null);
   const [windowChoice, setWindowChoice] = useState<Window>('7d');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -182,8 +108,7 @@ export function Sessions({ headerSlot }: { headerSlot: (meta: string) => void })
     setLoading(true);
     setError(null);
     try {
-      const since = new Date(Date.now() - days * DAY_MS).toISOString();
-      setEntries(await fetchAdminLogsSince(since, { category: 'auth' }));
+      setData(await fetchSessionDiagnostics(days));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load session records.');
     } finally {
@@ -195,12 +120,8 @@ export function Sessions({ headerSlot }: { headerSlot: (meta: string) => void })
     void load();
   }, [load]);
 
-  const signOuts = useMemo(
-    () => entries.filter((entry) => isUnwantedSessionLoss(outcomeOf(entry))),
-    [entries]
-  );
-
-  const quiet = useMemo(() => quietSessions(entries, Date.now()), [entries]);
+  const losses: SessionLossRecord[] = data?.losses ?? [];
+  const quiet: QuietSessionRecord[] = data?.quiet ?? [];
 
   /**
    * The reading that accounts for most of the losses.
@@ -211,8 +132,8 @@ export function Sessions({ headerSlot }: { headerSlot: (meta: string) => void })
    */
   const reading = useMemo(() => {
     const groups = new Map<string, { diagnosis: SessionDiagnosis; count: number }>();
-    for (const entry of signOuts) {
-      const diagnosis = diagnoseSession(evidenceOf(entry));
+    for (const loss of losses) {
+      const diagnosis = diagnoseSession(evidenceOf(loss));
       const group = groups.get(diagnosis.statement);
       if (group) {
         group.count += 1;
@@ -225,18 +146,18 @@ export function Sessions({ headerSlot }: { headerSlot: (meta: string) => void })
       if (!top || group.count > top.count) top = group;
     }
     return top;
-  }, [signOuts]);
+  }, [losses]);
 
   useEffect(() => {
     if (loading) {
       headerSlot('');
       return;
     }
-    const witnessed = `${signOuts.length} ${signOuts.length === 1 ? 'sign-out' : 'sign-outs'}`;
+    const witnessed = `${losses.length} ${losses.length === 1 ? 'loss' : 'losses'}`;
     headerSlot(
       quiet.length > 0 ? `${witnessed} · ${quiet.length} quiet` : `${witnessed} · ${days} days`
     );
-  }, [headerSlot, signOuts.length, quiet.length, days, loading]);
+  }, [headerSlot, losses.length, quiet.length, days, loading]);
 
   const shown = reading?.diagnosis ?? (quiet.length > 0 ? QUIET_READING : null);
 
@@ -262,15 +183,11 @@ export function Sessions({ headerSlot }: { headerSlot: (meta: string) => void })
 
       {error ? <ErrorLine message={error} onRetry={load} /> : null}
 
-      {loading && entries.length === 0 ? <LoadingLine>Reading session records.</LoadingLine> : null}
+      {loading && !data ? <LoadingLine>Reading session records.</LoadingLine> : null}
 
       {!loading && !error ? (
         <div className="mt-3">
-          {entries.length === 0 ? (
-            <p className="m-0 text-[15px] text-ink/[0.66]">
-              Nothing recorded yet. The next time the app is opened it will start writing here.
-            </p>
-          ) : !shown ? (
+          {!shown ? (
             <p className="m-0 text-[15px] text-ink/[0.66]">
               No unwanted sign-outs in this window — every session was either accepted, still in
               use, or ended by someone signing out.
@@ -290,7 +207,7 @@ export function Sessions({ headerSlot }: { headerSlot: (meta: string) => void })
                   ? 'The evidence admits one explanation.'
                   : 'Several explanations remain — the evidence narrows it to these.'}{' '}
                 {reading
-                  ? `${reading.count} of ${signOuts.length} losses in the last ${days} days.`
+                  ? `${reading.count} of ${losses.length} losses in the last ${days} days.`
                   : `${quiet.length} ${quiet.length === 1 ? 'session' : 'sessions'} went quiet in the last ${days} days, with no loss recorded.`}
               </p>
             </div>
@@ -298,21 +215,21 @@ export function Sessions({ headerSlot }: { headerSlot: (meta: string) => void })
         </div>
       ) : null}
 
-      <SectionLabel className="mb-3 mt-6">Witnessed sign-outs</SectionLabel>
-      {!loading && signOuts.length === 0 ? (
+      <SectionLabel className="mb-3 mt-6">Recorded losses</SectionLabel>
+      {!loading && losses.length === 0 ? (
         <p className="m-0 text-[15px] text-ink/[0.66]">None.</p>
       ) : (
-        signOuts.map((entry) => (
+        losses.map((loss) => (
           <div
-            key={entry.id}
+            key={loss.id}
             className={`flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b py-[11px] ${DIVIDER} last:border-b-0`}
           >
             <span className="tabular w-[92px] flex-none text-[12px] text-ink/[0.52]">
-              {formatDateTime(entry.timestamp)}
+              {formatDateTime(loss.timestamp)}
             </span>
-            <StatusEnum status={outcomeOf(entry)} className="flex-none" />
+            <StatusEnum status={observationOf(loss)} className="flex-none" />
             <span className="w-full text-[13px] text-ink/[0.6] lg:w-auto lg:flex-1">
-              {detailOf(entry).join(' · ')}
+              {detailOf(loss).join(' · ')}
             </span>
           </div>
         ))
@@ -332,7 +249,7 @@ export function Sessions({ headerSlot }: { headerSlot: (meta: string) => void })
               className={`flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b py-[11px] ${DIVIDER} last:border-b-0`}
             >
               <span className="tabular w-[92px] flex-none text-[12px] text-ink/[0.52]">
-                {formatDateTime(session.lastSeen)}
+                {formatDateTime(session.lastSeenAt)}
               </span>
               <StatusEnum status="went_quiet" className="flex-none" />
               <span className="w-full text-[13px] text-ink/[0.6] lg:w-auto lg:flex-1">

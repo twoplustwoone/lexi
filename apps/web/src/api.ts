@@ -518,6 +518,41 @@ export async function fetchAdminLogs(
   return apiFetch<{ logs: AdminLogEntry[] }>(`/admin/logs${query ? `?${query}` : ''}`);
 }
 
+export interface SessionLossRecord {
+  id: string;
+  timestamp: string;
+  user_id: string | null;
+  metadata: Record<string, unknown> | null;
+}
+
+export interface QuietSessionRecord {
+  sessionId: string;
+  userId: string;
+  lastSeenAt: string;
+  expiresAt: string;
+  daysLeftWhenLastSeen: number;
+}
+
+export interface SessionDiagnosticsResponse {
+  since: string;
+  days: number;
+  quietDays: number;
+  losses: SessionLossRecord[];
+  quiet: QuietSessionRecord[];
+}
+
+/**
+ * The Sessions screen's whole payload, summarised by the API.
+ *
+ * Deliberately not assembled from `fetchAdminLogs` here: aggregating in the
+ * browser meant paging thousands of routine rows onto a phone, and a row cap
+ * between the screen and the window it claims to show is a cap that silently
+ * drops the losses being looked for.
+ */
+export async function fetchSessionDiagnostics(days: number): Promise<SessionDiagnosticsResponse> {
+  return apiFetch<SessionDiagnosticsResponse>(`/admin/session-diagnostics?days=${days}`);
+}
+
 const LOG_PAGE_SIZE = 500;
 /** Ten pages is far more than a week of logs at this scale, and bounds a runaway. */
 const LOG_PAGE_LIMIT = 10;

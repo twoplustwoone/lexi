@@ -33,6 +33,7 @@ import {
   createSession,
   getSessionUserId,
   inspectSession,
+  findQuietSessions,
   parseCookies,
   purgeExpiredSessions,
 } from './auth/sessions';
@@ -93,6 +94,14 @@ import {
 import { processEnrichmentQueue, triggerSingleEnrichment, EnrichmentService } from './enrichment';
 
 const app = new Hono<{ Bindings: Env }>();
+
+/**
+ * How long a session must go unseen to count as having gone quiet. Accepted
+ * sessions are noted at most every six hours, so a reader who opens the app
+ * daily leaves a daily trace — three days of silence is a real absence rather
+ * than a gap in the sampling.
+ */
+const QUIET_SESSION_DAYS = 3;
 
 function appendSetCookie(
   c: { header: (name: string, value: string, options?: { append?: boolean }) => void },
@@ -1432,6 +1441,55 @@ app.get('/api/admin/logs', async (c) => {
       ...log,
       metadata: log.metadata_json ? JSON.parse(log.metadata_json) : null,
     })),
+  });
+});
+
+/**
+ * Everything the Sessions screen needs, computed here.
+ *
+ * It previously paged the raw log into the browser and aggregated there, which
+ * put a hard row cap between the screen and the truth: a handful of active
+ * readers could fill it with routine records and silently push the losses out
+ * of the window being asked about. Summarising is the database's job, and the
+ * answer is small enough to read on a phone.
+ */
+app.get('/api/admin/session-diagnostics', async (c) => {
+  const cookies = parseCookies(c.req.header('cookie') ?? null);
+  const userId = await getSessionUserId(c.env, cookies.session ?? null);
+  if (!userId) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const user = await getUserById(c.env, userId);
+  if (!user || user.is_admin !== 1) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+
+  const days = Math.min(Math.max(Number(c.req.query('days')) || 7, 1), 90);
+  const since = DateTime.utc().minus({ days }).toISO() as string;
+
+  const losses = await queryLogs(c.env, {
+    category: 'auth',
+    level: 'warn',
+    since,
+    limit: 500,
+  });
+
+  const quiet = await findQuietSessions(c.env, {
+    quietDays: QUIET_SESSION_DAYS,
+    windowDays: days,
+  });
+
+  return c.json({
+    since,
+    days,
+    quietDays: QUIET_SESSION_DAYS,
+    losses: losses.map((entry) => ({
+      id: entry.id,
+      timestamp: entry.timestamp,
+      user_id: entry.user_id,
+      metadata: entry.metadata_json ? JSON.parse(entry.metadata_json) : null,
+    })),
+    quiet,
   });
 });
 

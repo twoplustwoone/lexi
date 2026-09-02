@@ -22,9 +22,9 @@ export async function createSession(
   const sessionId = crypto.randomUUID();
 
   await env.DB.prepare(
-    'INSERT INTO sessions (id, user_id, token_hash, created_at, expires_at) VALUES (?, ?, ?, ?, ?)'
+    'INSERT INTO sessions (id, user_id, token_hash, created_at, expires_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?)'
   )
-    .bind(sessionId, userId, tokenHash, now.toISO(), expiresAt)
+    .bind(sessionId, userId, tokenHash, now.toISO(), expiresAt, now.toISO())
     .run();
 
   return { token, id: sessionId, userId, expiresAt };
@@ -110,6 +110,94 @@ export async function purgeExpiredSessions(env: Env): Promise<number> {
     .bind(cutoff)
     .run();
   return result.meta?.changes ?? 0;
+}
+
+/**
+ * Note when a session was last presented.
+ *
+ * Called on a sampled basis rather than on every request — the question it
+ * answers is "did this session go quiet for days", so hours of resolution are
+ * ample and a write per app open is not.
+ */
+export async function touchSession(
+  env: Env,
+  sessionId: string,
+  at = DateTime.utc()
+): Promise<void> {
+  await env.DB.prepare('UPDATE sessions SET last_seen_at = ? WHERE id = ?')
+    .bind(at.toISO(), sessionId)
+    .run();
+}
+
+export interface QuietSession {
+  sessionId: string;
+  userId: string;
+  lastSeenAt: string;
+  expiresAt: string;
+  daysLeftWhenLastSeen: number;
+}
+
+/**
+ * Sessions that stopped being presented while they still had time to run.
+ *
+ * This is the only trace storage eviction leaves — it takes the cookie and the
+ * client's own flag together, so the request after it is a stranger's in every
+ * respect and no single record can witness it. It is equally what a reader who
+ * stopped opening the app looks like, which is why it is reported as an
+ * inference and never as a cause.
+ *
+ * A session that simply ran out is excluded by the second condition: it was
+ * being used up until its expiry, so it had no life left when last seen. That
+ * is an expiry, and an expiry is witnessed directly.
+ */
+export async function findQuietSessions(
+  env: Env,
+  options: { quietDays: number; windowDays: number; limit?: number }
+): Promise<QuietSession[]> {
+  const now = DateTime.utc();
+  const quietBefore = now.minus({ days: options.quietDays }).toISO();
+  const windowStart = now.minus({ days: options.windowDays }).toISO();
+
+  const result = await env.DB.prepare(
+    `SELECT id, user_id, expires_at, last_seen_at
+       FROM sessions
+      WHERE last_seen_at IS NOT NULL
+        AND last_seen_at <= ?
+        AND last_seen_at >= ?
+      ORDER BY last_seen_at DESC
+      LIMIT ?`
+  )
+    .bind(quietBefore, windowStart, options.limit ?? 200)
+    .all();
+
+  const rows = (result.results ?? []) as unknown as Array<{
+    id: string;
+    user_id: string;
+    expires_at: string;
+    last_seen_at: string;
+  }>;
+
+  const quietMs = options.quietDays * 24 * 60 * 60 * 1000;
+  const quiet: QuietSession[] = [];
+
+  for (const row of rows) {
+    const lastSeen = Date.parse(row.last_seen_at);
+    const expires = Date.parse(row.expires_at);
+    if (!Number.isFinite(lastSeen) || !Number.isFinite(expires)) continue;
+
+    const lifeLeft = expires - lastSeen;
+    if (lifeLeft < quietMs) continue;
+
+    quiet.push({
+      sessionId: row.id,
+      userId: row.user_id,
+      lastSeenAt: row.last_seen_at,
+      expiresAt: row.expires_at,
+      daysLeftWhenLastSeen: Math.round(lifeLeft / (24 * 60 * 60 * 1000)),
+    });
+  }
+
+  return quiet;
 }
 
 export async function clearSession(env: Env, token: string | null): Promise<void> {

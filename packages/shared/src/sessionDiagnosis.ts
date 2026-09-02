@@ -34,12 +34,22 @@ export interface SessionEvidence {
   observation: SessionObservation;
   /** The browser's own classification of the request, when it sent one. */
   secFetchSite?: string | null;
-  /** The SameSite policy the cookie was issued under. */
-  sameSite?: string | null;
+  /**
+   * The SameSite setting configured when the loss was recorded.
+   *
+   * Emphatically not "the policy this cookie was issued under": a rollout does
+   * not rewrite cookies already in browsers, so after a Lax-to-None change an
+   * old Lax cookie is still Lax while this reads None. Nothing below may
+   * conclude from it — it only shapes which explanations are worth listing.
+   */
+  configuredSameSite?: string | null;
   /** How many days the session lasted before expiring. */
   ageDays?: number | null;
-  /** The configured term it was issued for. */
-  ttlDays?: number | null;
+  /**
+   * The term the session was actually issued for, derived from its own
+   * created and expires timestamps rather than from configuration.
+   */
+  termDays?: number | null;
 }
 
 export interface SessionDiagnosis {
@@ -54,15 +64,16 @@ export interface SessionDiagnosis {
   nextStep?: string;
 }
 
-/** Within this fraction of the configured term counts as running full term. */
+/** Within this fraction of its own term counts as running full term. */
 const FULL_TERM = 0.95;
 
 function diagnoseExpired(evidence: SessionEvidence): SessionDiagnosis {
-  const { ageDays, ttlDays } = evidence;
+  const { ageDays, termDays } = evidence;
 
-  // The row is its own evidence here: it recorded when it was issued and when
-  // it lapsed, so what happened is settled. Only the remedy varies.
-  if (typeof ageDays !== 'number' || typeof ttlDays !== 'number' || ttlDays <= 0) {
+  // Settled, and settled by the row's own two dates: when it was issued and
+  // when it lapsed. Configuration is not consulted, so a setting changed since
+  // cannot make this read wrong. Only the remedy varies.
+  if (typeof ageDays !== 'number' || typeof termDays !== 'number' || termDays <= 0) {
     return {
       statement: 'The session reached its expiry and was refused.',
       standing: 'determined',
@@ -70,9 +81,9 @@ function diagnoseExpired(evidence: SessionEvidence): SessionDiagnosis {
     };
   }
 
-  if (ageDays >= ttlDays * FULL_TERM) {
+  if (ageDays >= termDays * FULL_TERM) {
     return {
-      statement: `The session ran its full term of ${ttlDays} days and expired.`,
+      statement: `The session ran its full term of ${termDays} days and expired.`,
       standing: 'determined',
       nextStep:
         'Nothing is broken — the term is simply short for how people use the app. Raise SESSION_TTL_DAYS, or renew a session on use so an active reader is never signed out.',
@@ -80,38 +91,51 @@ function diagnoseExpired(evidence: SessionEvidence): SessionDiagnosis {
   }
 
   return {
-    statement: `The session expired after ${ageDays} days, well short of the ${ttlDays} it was issued for.`,
+    statement: `The session expired after ${ageDays} days, well short of the ${termDays} it was issued for.`,
     standing: 'determined',
     nextStep:
-      'The row was written with a shorter expiry than the setting says. Check what SESSION_TTL_DAYS resolved to when the session was created.',
+      'The row was written with a shorter expiry than its term implies. Check what SESSION_TTL_DAYS resolved to when the session was created.',
   };
 }
 
 function diagnoseMissingCookie(evidence: SessionEvidence): SessionDiagnosis {
   const crossSite = evidence.secFetchSite === 'cross-site';
-  const sameSite = (evidence.sameSite ?? 'Lax').toLowerCase();
+  const sameSite = (evidence.configuredSameSite ?? 'Lax').toLowerCase();
 
+  /**
+   * This is never `determined`, and the temptation to make it so is the single
+   * mistake this module exists to stop making.
+   *
+   * The server sees that no cookie arrived. It cannot see whether one was
+   * there to arrive. A cookie the browser withheld and a cookie that had
+   * already been deleted, evicted, or never stored produce byte-identical
+   * requests, and `Sec-Fetch-Site` classifies the request, not the cookie. So
+   * a cross-site request under SameSite=Lax is *consistent with* the browser
+   * withholding it — it is not proof that it did, and telling someone to
+   * change SameSite when the cookie was simply gone sends them to fix a thing
+   * that was never broken.
+   *
+   * What the configured policy earns is a place in the shortlist, and an
+   * ordering of it. Never a conclusion.
+   */
   if (crossSite && (sameSite === 'lax' || sameSite === 'strict')) {
-    // This one the evidence really does settle. A Lax or Strict cookie is
-    // withheld on a cross-site request by specification, and the browser
-    // itself is what called the request cross-site.
     return {
-      statement: `The browser withheld the cookie: the request was cross-site and the cookie is SameSite=${evidence.sameSite}.`,
-      standing: 'determined',
+      statement: `The request was cross-site and the cookie is configured SameSite=${evidence.configuredSameSite}, which would withhold it — though a cookie already deleted or evicted looks exactly the same from here.`,
+      standing: 'narrowed',
       nextStep:
-        'Set SESSION_COOKIE_SAMESITE to None — it requires HTTPS, which COOKIE_SECURE already gives you — or move the API onto the app’s own domain.',
+        'Setting SESSION_COOKIE_SAMESITE to None removes the one candidate you can act on, and is worth doing regardless while the API is on another site. If losses continue after that, the cookie was going missing on its own.',
     };
   }
 
   if (crossSite) {
-    // Policy is already None, so SameSite is not what stopped it. Saying
-    // otherwise would send someone to change a setting that is already right.
+    // Policy is already None, so SameSite is not among the candidates at all.
+    // Recommending it would send someone to change a setting already correct.
     return {
       statement:
-        'The request was cross-site and the cookie policy is already None, so SameSite did not withhold it. Third-party cookie blocking, or the cookie was already gone.',
+        'The request was cross-site with the policy already None, so SameSite did not withhold it: the cookie was blocked as third-party, deleted, or evicted.',
       standing: 'narrowed',
       nextStep:
-        'Browsers that block third-party cookies will not send this cookie at all from another site. Serving the API from the app’s own domain is the only reliable fix for that.',
+        'Browsers that block third-party cookies will not send this one from another site at all. Serving the API from the app’s own domain is the only reliable answer to that.',
     };
   }
 

@@ -5,6 +5,7 @@ import { describeRequest, observeSession, recordSessionCheck } from '../src/auth
 import {
   buildSessionCookie,
   createSession,
+  findQuietSessions,
   inspectSession,
   purgeExpiredSessions,
 } from '../src/auth/sessions';
@@ -191,22 +192,29 @@ describe('one loss, one record', () => {
     }
   });
 
-  it('records an accepted session once, not once per app open', async () => {
+  it('keeps a live session as state on the session, not as a stream of events', async () => {
     const { env, cleanup } = await createTestEnv();
     try {
-      const lookup = {
-        outcome: 'valid',
-        sessionId: 's1',
-        userId: 'user-1',
-        createdAt: DateTime.utc().minus({ days: 1 }).toISO() as string,
-        expiresAt: DateTime.utc().plus({ days: 29 }).toISO() as string,
-      } as const;
+      await createUser(env);
+      const session = await createSession(env, 'user-1');
+      await env.DB.prepare('UPDATE sessions SET last_seen_at = ? WHERE id = ?')
+        .bind(DateTime.utc().minus({ days: 5 }).toISO(), session.id)
+        .run();
 
+      const lookup = await inspectSession(env, session.token);
       for (let i = 0; i < 5; i += 1) {
         await recordSessionCheck(env, request({ cookie: 'session=x' }), lookup, 'user-1');
       }
 
-      expect(await queryLogs(env, { category: 'auth' })).toHaveLength(1);
+      // A session still being alive is not an event. Written as a heartbeat row
+      // it forced one write per app open and made reading it back a scan of
+      // every heartbeat ever recorded.
+      expect(await queryLogs(env, { category: 'auth' })).toHaveLength(0);
+
+      const row = (await env.DB.prepare('SELECT last_seen_at FROM sessions WHERE id = ?')
+        .bind(session.id)
+        .first()) as { last_seen_at: string };
+      expect(Date.parse(row.last_seen_at)).toBeGreaterThan(Date.now() - 60_000);
     } finally {
       await cleanup();
     }
@@ -295,6 +303,66 @@ describe('inspectSession', () => {
   });
 });
 
+describe('findQuietSessions', () => {
+  /**
+   * The only trace storage eviction leaves. It is a property of the session —
+   * when it was last presented against when it was due to expire — so it is
+   * answered by a query over sessions rather than by paging every heartbeat
+   * ever written into the browser and aggregating there.
+   */
+  it('finds sessions that stopped being used while they still had time to run', async () => {
+    const { env, cleanup } = await createTestEnv();
+    try {
+      const insert = async (id: string, lastSeenDaysAgo: number, expiresInDays: number) =>
+        env.DB.prepare(
+          'INSERT INTO sessions (id, user_id, token_hash, created_at, expires_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?)'
+        )
+          .bind(
+            id,
+            'user-1',
+            hashToken(id, env.SESSION_SECRET),
+            DateTime.utc().minus({ days: 20 }).toISO(),
+            DateTime.utc().plus({ days: expiresInDays }).toISO(),
+            DateTime.utc().minus({ days: lastSeenDaysAgo }).toISO()
+          )
+          .run();
+
+      await insert('quiet', 6, 20); // gone silent with weeks left to run
+      await insert('active', 0, 20); // still in use
+      await insert('ran-out', 6, -5); // was used right up to its expiry
+
+      const quiet = await findQuietSessions(env, { quietDays: 3, windowDays: 30 });
+
+      expect(quiet.map((session) => session.sessionId)).toEqual(['quiet']);
+      expect(quiet[0].daysLeftWhenLastSeen).toBeGreaterThan(20);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('does not reach outside the window it was asked about', async () => {
+    const { env, cleanup } = await createTestEnv();
+    try {
+      await env.DB.prepare(
+        'INSERT INTO sessions (id, user_id, token_hash, created_at, expires_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?)'
+      )
+        .bind(
+          'ancient',
+          'user-1',
+          hashToken('ancient', env.SESSION_SECRET),
+          DateTime.utc().minus({ days: 200 }).toISO(),
+          DateTime.utc().minus({ days: 100 }).toISO(),
+          DateTime.utc().minus({ days: 180 }).toISO()
+        )
+        .run();
+
+      expect(await findQuietSessions(env, { quietDays: 3, windowDays: 30 })).toHaveLength(0);
+    } finally {
+      await cleanup();
+    }
+  });
+});
+
 describe('purgeExpiredSessions', () => {
   it('keeps recent evidence and collects what is past the window', async () => {
     const { env, cleanup } = await createTestEnv();
@@ -361,8 +429,10 @@ describe('recordSessionCheck', () => {
           outcome: 'expired',
           sessionId: 's1',
           userId: 'user-1',
+          // Issued for seven days, two days ago — so it died five days early,
+          // and its term is seven regardless of what the setting says now.
           createdAt: DateTime.utc().minus({ days: 2 }).toISO() as string,
-          expiresAt: DateTime.utc().minus({ hours: 1 }).toISO() as string,
+          expiresAt: DateTime.utc().plus({ days: 5 }).toISO() as string,
         },
         'user-1'
       );
@@ -374,10 +444,19 @@ describe('recordSessionCheck', () => {
       const metadata = JSON.parse(entry.metadata_json ?? '{}');
       expect(metadata.outcome).toBe('expired');
       expect(metadata.ageDays).toBeCloseTo(2, 0);
-      // Without the policy alongside, a reading cannot tell a cookie SameSite
-      // withheld from one that was blocked or already gone.
-      expect(metadata.cookiePolicy).toEqual({ sameSite: 'Lax', secure: false, ttlDays: 30 });
       expect(metadata.secFetchSite).toBe('same-site');
+
+      // The term is taken from the session's own two dates, never from
+      // configuration: SESSION_TTL_DAYS may have moved since it was issued,
+      // and reading the current value would report a 7-day session as having
+      // died three weeks early.
+      expect(metadata.termDays).toBeCloseTo(7, 0);
+
+      // Named for what it is. A rollout does not rewrite cookies already in
+      // browsers, so this is the configuration at the time of the check and
+      // not necessarily what issued the cookie that went missing.
+      expect(metadata.configuredPolicy).toEqual({ sameSite: 'Lax', secure: false, ttlDays: 30 });
+      expect(metadata.cookiePolicy).toBeUndefined();
     } finally {
       await cleanup();
     }

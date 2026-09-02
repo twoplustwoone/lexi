@@ -2,7 +2,7 @@ import { SessionObservation, isUnwantedSessionLoss } from '@word-of-the-day/shar
 
 import { Env } from '../env';
 import { logInfo, logWarn } from '../notifications/logger';
-import { SessionLookup, parseCookies } from './sessions';
+import { SessionLookup, parseCookies, touchSession } from './sessions';
 
 /**
  * Recording why sessions end.
@@ -138,9 +138,10 @@ const SUMMARIES: Record<SessionObservation, string> = {
 };
 
 /**
- * How often an accepted session is worth writing down. Every app open asks
- * `/api/me`; one record every few hours is enough to date a session's last
- * sighting, which is all the accepted records are for.
+ * How often an accepted session is worth noting. Every app open asks
+ * `/api/me`; the only question the note answers is whether a session went
+ * quiet for days, so hours of resolution are ample and a write per app open
+ * is not.
  */
 const ACCEPTED_RECORD_INTERVAL_SECONDS = 6 * 60 * 60;
 
@@ -182,41 +183,51 @@ export async function recordSessionCheck(
 
   // An anonymous reader supports no diagnosis: no session, no session id, and
   // nothing lost. They are also the overwhelming majority of requests, so
-  // writing them down would push the records that matter out of every window
+  // writing them down would push the records that matter out of any window
   // that reads them.
   if (observation === 'anonymous') {
     return;
   }
 
-  if (
-    observation === 'ok' &&
-    lookup.outcome === 'valid' &&
-    !(await acceptedIsWorthRecording(env, lookup.sessionId))
-  ) {
+  // An accepted session is not an event, it is the session still being alive.
+  // Recorded as its own state on the session row, so that reading it back is a
+  // query rather than a scan of every heartbeat ever written.
+  if (observation === 'ok' && lookup.outcome === 'valid') {
+    if (await acceptedIsWorthRecording(env, lookup.sessionId)) {
+      await touchSession(env, lookup.sessionId);
+    }
     return;
   }
 
   const metadata: Record<string, unknown> = {
     outcome: observation,
     ...fingerprint,
-    // The policy the cookie was issued under. `diagnoseSession` needs it: a
-    // cross-site request means one thing under SameSite=Lax and another under
-    // None, and without it the reading would send someone to change a setting
-    // that is already correct.
-    cookiePolicy: {
+    /**
+     * The configuration in force *at the time of this check* — not, despite
+     * how it is tempting to read it, the policy the cookie in question was
+     * issued under. A rollout does not rewrite cookies already in browsers,
+     * so after a Lax-to-None change an old Lax cookie is still Lax while this
+     * says None. It is named for what it is, and no reading may assert from
+     * it; it is only ever used to shape which explanations are plausible.
+     */
+    configuredPolicy: {
       sameSite: env.SESSION_COOKIE_SAMESITE || 'Lax',
       secure: env.COOKIE_SECURE === 'true',
       ttlDays: Number(env.SESSION_TTL_DAYS || '30'),
     },
   };
 
-  if (lookup.outcome === 'valid' || lookup.outcome === 'expired') {
+  if (lookup.outcome === 'expired') {
     metadata.sessionId = lookup.sessionId;
     metadata.sessionCreatedAt = lookup.createdAt;
     metadata.sessionExpiresAt = lookup.expiresAt;
     // How long the session lasted in practice. A term of 30 days that ends at
     // 2 is the whole question, and this is the number that answers it.
     metadata.ageDays = daysBetween(lookup.createdAt, Date.now());
+    // The term this session was actually issued for, taken from its own two
+    // dates rather than from configuration. SESSION_TTL_DAYS may have changed
+    // since; these have not.
+    metadata.termDays = daysBetween(lookup.createdAt, Date.parse(lookup.expiresAt));
   }
 
   const level = isUnwantedSessionLoss(observation) ? logWarn : logInfo;
@@ -242,7 +253,9 @@ export async function recordSessionCreated(
       sessionId: params.sessionId,
       sessionExpiresAt: params.expiresAt,
       ...describeRequest(request),
-      cookiePolicy: {
+      // Here this really is the issuing policy: the cookie is going out in
+      // this response, under exactly these settings.
+      issuedPolicy: {
         sameSite: env.SESSION_COOKIE_SAMESITE || 'Lax',
         secure: env.COOKIE_SECURE === 'true',
         ttlDays: Number(env.SESSION_TTL_DAYS || '30'),

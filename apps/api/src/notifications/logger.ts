@@ -119,12 +119,14 @@ export interface LogQueryParams {
   category?: LogCategory;
   level?: LogLevel;
   userId?: string;
+  /** ISO timestamp; only records at or after it are returned. */
+  since?: string;
   limit?: number;
   offset?: number;
 }
 
 export async function queryLogs(env: Env, params: LogQueryParams = {}): Promise<StoredLogEntry[]> {
-  const { category, level, userId, limit = 100, offset = 0 } = params;
+  const { category, level, userId, since, limit = 100, offset = 0 } = params;
 
   const conditions: string[] = [];
   const bindings: (string | number)[] = [];
@@ -140,6 +142,10 @@ export async function queryLogs(env: Env, params: LogQueryParams = {}): Promise<
   if (userId) {
     conditions.push('user_id = ?');
     bindings.push(userId);
+  }
+  if (since) {
+    conditions.push('timestamp >= ?');
+    bindings.push(since);
   }
 
   let query = 'SELECT * FROM notification_logs';
