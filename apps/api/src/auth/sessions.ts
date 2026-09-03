@@ -22,34 +22,182 @@ export async function createSession(
   const sessionId = crypto.randomUUID();
 
   await env.DB.prepare(
-    'INSERT INTO sessions (id, user_id, token_hash, created_at, expires_at) VALUES (?, ?, ?, ?, ?)'
+    'INSERT INTO sessions (id, user_id, token_hash, created_at, expires_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?)'
   )
-    .bind(sessionId, userId, tokenHash, now.toISO(), expiresAt)
+    .bind(sessionId, userId, tokenHash, now.toISO(), expiresAt, now.toISO())
     .run();
 
   return { token, id: sessionId, userId, expiresAt };
 }
 
-export async function getSessionUserId(env: Env, token: string | null): Promise<string | null> {
+/**
+ * What a session token turned out to be. `getSessionUserId` only needs to know
+ * whether it may proceed, but diagnosing an unwanted sign-out needs the
+ * difference between a session that expired and one that was never here — the
+ * first is a TTL question, the second means the row was purged or
+ * `SESSION_SECRET` changed underneath it.
+ */
+export type SessionLookup =
+  | { outcome: 'no_token' }
+  | { outcome: 'unknown_token' }
+  | {
+      outcome: 'expired';
+      sessionId: string;
+      userId: string;
+      createdAt: string;
+      expiresAt: string;
+    }
+  | { outcome: 'valid'; sessionId: string; userId: string; createdAt: string; expiresAt: string };
+
+/**
+ * How long an expired session is kept as evidence before the sweep removes it.
+ *
+ * Deleting on sight is what made the "logged out again" reports impossible to
+ * chase: the row that would have said when the session was issued and how long
+ * it lasted was gone by the time anyone came asking. Expired rows are inert —
+ * the check in `inspectSession` rejects them either way — so they are held for
+ * a fortnight instead, and `purgeExpiredSessions` clears them on the cron.
+ */
+export const EXPIRED_SESSION_RETENTION_DAYS = 14;
+
+/** Read-only: reports what the token is without changing anything. */
+export async function inspectSession(env: Env, token: string | null): Promise<SessionLookup> {
   if (!token) {
-    return null;
+    return { outcome: 'no_token' };
   }
   const tokenHash = hashToken(token, env.SESSION_SECRET);
   const now = DateTime.utc().toISO();
   const result = await env.DB.prepare(
-    'SELECT user_id, expires_at FROM sessions WHERE token_hash = ? LIMIT 1'
+    'SELECT id, user_id, created_at, expires_at FROM sessions WHERE token_hash = ? LIMIT 1'
   )
     .bind(tokenHash)
     .first();
   if (!result) {
-    return null;
+    return { outcome: 'unknown_token' };
   }
-  const record = result as { user_id: string; expires_at: string };
-  if (record.expires_at <= now) {
-    await env.DB.prepare('DELETE FROM sessions WHERE token_hash = ?').bind(tokenHash).run();
-    return null;
+  const record = result as {
+    id: string;
+    user_id: string;
+    created_at: string;
+    expires_at: string;
+  };
+  const common = {
+    sessionId: record.id,
+    userId: record.user_id,
+    createdAt: record.created_at,
+    expiresAt: record.expires_at,
+  };
+  return record.expires_at <= now
+    ? { outcome: 'expired', ...common }
+    : { outcome: 'valid', ...common };
+}
+
+export async function getSessionUserId(env: Env, token: string | null): Promise<string | null> {
+  const lookup = await inspectSession(env, token);
+  return lookup.outcome === 'valid' ? lookup.userId : null;
+}
+
+/**
+ * Remove sessions that expired longer ago than the evidence window.
+ *
+ * This has to be a sweep rather than something a read triggers: a request can
+ * only purge the session whose token it carries, so any reader who simply
+ * stops coming back leaves a row nothing will ever collect.
+ */
+export async function purgeExpiredSessions(env: Env): Promise<number> {
+  const cutoff = DateTime.utc().minus({ days: EXPIRED_SESSION_RETENTION_DAYS }).toISO();
+  const result = await env.DB.prepare('DELETE FROM sessions WHERE expires_at <= ?')
+    .bind(cutoff)
+    .run();
+  return result.meta?.changes ?? 0;
+}
+
+/**
+ * Note when a session was last presented.
+ *
+ * Called on a sampled basis rather than on every request — the question it
+ * answers is "did this session go quiet for days", so hours of resolution are
+ * ample and a write per app open is not.
+ */
+export async function touchSession(
+  env: Env,
+  sessionId: string,
+  at = DateTime.utc()
+): Promise<void> {
+  await env.DB.prepare('UPDATE sessions SET last_seen_at = ? WHERE id = ?')
+    .bind(at.toISO(), sessionId)
+    .run();
+}
+
+export interface QuietSession {
+  sessionId: string;
+  userId: string;
+  lastSeenAt: string;
+  expiresAt: string;
+  daysLeftWhenLastSeen: number;
+}
+
+/**
+ * Sessions that stopped being presented while they still had time to run.
+ *
+ * This is the only trace storage eviction leaves — it takes the cookie and the
+ * client's own flag together, so the request after it is a stranger's in every
+ * respect and no single record can witness it. It is equally what a reader who
+ * stopped opening the app looks like, which is why it is reported as an
+ * inference and never as a cause.
+ *
+ * A session that simply ran out is excluded by the second condition: it was
+ * being used up until its expiry, so it had no life left when last seen. That
+ * is an expiry, and an expiry is witnessed directly.
+ */
+export async function findQuietSessions(
+  env: Env,
+  options: { quietDays: number; windowDays: number; limit?: number }
+): Promise<QuietSession[]> {
+  const now = DateTime.utc();
+  const quietBefore = now.minus({ days: options.quietDays }).toISO();
+  const windowStart = now.minus({ days: options.windowDays }).toISO();
+
+  const result = await env.DB.prepare(
+    `SELECT id, user_id, expires_at, last_seen_at
+       FROM sessions
+      WHERE last_seen_at IS NOT NULL
+        AND last_seen_at <= ?
+        AND last_seen_at >= ?
+      ORDER BY last_seen_at DESC
+      LIMIT ?`
+  )
+    .bind(quietBefore, windowStart, options.limit ?? 200)
+    .all();
+
+  const rows = (result.results ?? []) as unknown as Array<{
+    id: string;
+    user_id: string;
+    expires_at: string;
+    last_seen_at: string;
+  }>;
+
+  const quietMs = options.quietDays * 24 * 60 * 60 * 1000;
+  const quiet: QuietSession[] = [];
+
+  for (const row of rows) {
+    const lastSeen = Date.parse(row.last_seen_at);
+    const expires = Date.parse(row.expires_at);
+    if (!Number.isFinite(lastSeen) || !Number.isFinite(expires)) continue;
+
+    const lifeLeft = expires - lastSeen;
+    if (lifeLeft < quietMs) continue;
+
+    quiet.push({
+      sessionId: row.id,
+      userId: row.user_id,
+      lastSeenAt: row.last_seen_at,
+      expiresAt: row.expires_at,
+      daysLeftWhenLastSeen: Math.round(lifeLeft / (24 * 60 * 60 * 1000)),
+    });
   }
-  return record.user_id;
+
+  return quiet;
 }
 
 export async function clearSession(env: Env, token: string | null): Promise<void> {
@@ -67,7 +215,18 @@ export function buildSessionCookie(
 ): string {
   const secure = env.COOKIE_SECURE === 'true';
   const sameSite = env.SESSION_COOKIE_SAMESITE || 'Lax';
-  const maxAge = options.clear ? 0 : Number(env.SESSION_TTL_DAYS || '30') * 24 * 60 * 60;
+  /**
+   * The cookie deliberately outlives the session it carries.
+   *
+   * Given the same lifetime, the browser drops the cookie at the very moment
+   * the row expires, so the next request arrives with nothing and a genuine
+   * expiry is indistinguishable from a cookie that was never sent. Carrying
+   * the dead token for the evidence window means the expired row can still be
+   * found and can say how long it actually lasted. It grants nothing in the
+   * meantime: `inspectSession` rejects it on `expires_at`, which is unchanged.
+   */
+  const ttlDays = Number(env.SESSION_TTL_DAYS || '30');
+  const maxAge = options.clear ? 0 : (ttlDays + EXPIRED_SESSION_RETENTION_DAYS) * 24 * 60 * 60;
 
   return [
     `session=${options.clear ? '' : token}`,

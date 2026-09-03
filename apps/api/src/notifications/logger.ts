@@ -3,7 +3,7 @@ import { DateTime } from 'luxon';
 import { Env } from '../env';
 
 export type LogLevel = 'info' | 'warn' | 'error';
-export type LogCategory = 'cron' | 'push' | 'subscription' | 'vapid' | 'rate_limit';
+export type LogCategory = 'cron' | 'push' | 'subscription' | 'vapid' | 'rate_limit' | 'auth';
 
 export interface LogEntry {
   level: LogLevel;
@@ -98,16 +98,35 @@ export function logError(
   return log(env, { level: 'error', category, message, metadata, userId });
 }
 
+/**
+ * Drop `auth` records past their useful life.
+ *
+ * Only that category: it is the one this table gained for diagnosing
+ * sign-outs, and it is written on every app open, so it is the only one whose
+ * growth is unbounded. Nothing else in here is this sweep's to delete.
+ */
+export async function purgeExpiredAuthLogs(env: Env, retentionDays = 30): Promise<number> {
+  const cutoff = DateTime.utc().minus({ days: retentionDays }).toISO();
+  const result = await env.DB.prepare(
+    "DELETE FROM notification_logs WHERE category = 'auth' AND timestamp <= ?"
+  )
+    .bind(cutoff)
+    .run();
+  return result.meta?.changes ?? 0;
+}
+
 export interface LogQueryParams {
   category?: LogCategory;
   level?: LogLevel;
   userId?: string;
+  /** ISO timestamp; only records at or after it are returned. */
+  since?: string;
   limit?: number;
   offset?: number;
 }
 
 export async function queryLogs(env: Env, params: LogQueryParams = {}): Promise<StoredLogEntry[]> {
-  const { category, level, userId, limit = 100, offset = 0 } = params;
+  const { category, level, userId, since, limit = 100, offset = 0 } = params;
 
   const conditions: string[] = [];
   const bindings: (string | number)[] = [];
@@ -123,6 +142,10 @@ export async function queryLogs(env: Env, params: LogQueryParams = {}): Promise<
   if (userId) {
     conditions.push('user_id = ?');
     bindings.push(userId);
+  }
+  if (since) {
+    conditions.push('timestamp >= ?');
+    bindings.push(since);
   }
 
   let query = 'SELECT * FROM notification_logs';

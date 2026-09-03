@@ -22,6 +22,7 @@ import {
 import { buildServerEvent, recordEvent } from './analytics';
 import { sendEmailCode } from './auth/email';
 import { verifyGoogleIdToken } from './auth/google';
+import { recordSessionCheck, recordSessionCleared, recordSessionCreated } from './auth/diagnostics';
 import { resolveAnonymousId, resolveUserId } from './auth/identity';
 import { mergeAnonymousIntoUser } from './auth/merge';
 import { buildExpiry, createCodeHash, generateNumericCode } from './auth/otp';
@@ -31,7 +32,10 @@ import {
   clearSession,
   createSession,
   getSessionUserId,
+  inspectSession,
+  findQuietSessions,
   parseCookies,
+  purgeExpiredSessions,
 } from './auth/sessions';
 import { Env } from './env';
 import {
@@ -42,7 +46,14 @@ import {
   updateUserTimezone,
   upsertNotificationSchedule,
 } from './db';
-import { logInfo, logWarn, LogCategory, LogLevel, queryLogs } from './notifications/logger';
+import {
+  logInfo,
+  logWarn,
+  purgeExpiredAuthLogs,
+  LogCategory,
+  LogLevel,
+  queryLogs,
+} from './notifications/logger';
 import {
   isAllowedPushEndpoint,
   sendWebPushNotification,
@@ -84,11 +95,39 @@ import { processEnrichmentQueue, triggerSingleEnrichment, EnrichmentService } fr
 
 const app = new Hono<{ Bindings: Env }>();
 
+/**
+ * How long a session must go unseen to count as having gone quiet. Accepted
+ * sessions are noted at most every six hours, so a reader who opens the app
+ * daily leaves a daily trace — three days of silence is a real absence rather
+ * than a gap in the sampling.
+ */
+const QUIET_SESSION_DAYS = 3;
+
 function appendSetCookie(
   c: { header: (name: string, value: string, options?: { append?: boolean }) => void },
   cookie: string
 ): void {
   c.header('Set-Cookie', cookie, { append: true });
+}
+
+/**
+ * Run a side errand without holding up the response. Diagnostics write a D1
+ * row per request; a reader waiting on their word should never pay for that.
+ */
+function background(c: { executionCtx?: ExecutionContext }, work: Promise<unknown>): void {
+  const settled = work.catch(() => undefined);
+  try {
+    // Hono throws rather than returning undefined when there is no execution
+    // context, and a diagnostic is never worth failing a request over.
+    const ctx = c.executionCtx;
+    if (ctx && 'waitUntil' in ctx) {
+      ctx.waitUntil(settled);
+      return;
+    }
+  } catch {
+    // Falls through to letting the promise run unawaited.
+  }
+  void settled;
 }
 
 function normalizeKeyPart(value: string): string {
@@ -168,7 +207,10 @@ app.use('*', async (c, next) => {
     c.header('Access-Control-Allow-Origin', origin);
   }
   c.header('Access-Control-Allow-Credentials', 'true');
-  c.header('Access-Control-Allow-Headers', 'Content-Type, X-Anon-Id, X-Timezone');
+  c.header(
+    'Access-Control-Allow-Headers',
+    'Content-Type, X-Anon-Id, X-Timezone, X-Client-Session, X-Client-Display'
+  );
   c.header('Access-Control-Allow-Methods', 'GET,POST,PUT,OPTIONS');
   c.header('Vary', 'Origin', { append: true });
   if (c.req.method === 'OPTIONS') {
@@ -248,16 +290,32 @@ app.post('/api/identity/anonymous', async (c) => {
   });
 });
 
+/**
+ * The app asks this on every load to decide whether it is signed in, which
+ * makes it the one place where an unwanted sign-out is observable. Each answer
+ * is recorded with what the browser presented, so a logout that only happens
+ * on someone's phone leaves evidence behind. See `auth/diagnostics.ts`.
+ */
 app.get('/api/me', async (c) => {
   const cookieHeader = c.req.header('cookie');
   const cookies = parseCookies(cookieHeader ?? null);
   const token = cookies.session ?? null;
-  let userId: string | null = null;
-  if (token) {
-    userId = await getSessionUserId(c.env, token);
+  const lookup = await inspectSession(c.env, token);
+  const userId = lookup.outcome === 'valid' ? lookup.userId : null;
+
+  // A token that names a dead or unknown session is discarded as soon as it is
+  // seen. This is what keeps one lost session from being written down over and
+  // over: the cookie deliberately outlives the row so the expiry can be
+  // observed once, and clearing it here is the other half of that bargain —
+  // without it the browser would present the same dead token on every app open
+  // for a fortnight, and one reader would outweigh every other in the records.
+  if (lookup.outcome === 'expired' || lookup.outcome === 'unknown_token') {
+    appendSetCookie(c, buildSessionCookie(c.env, '', { clear: true }));
   }
+
   if (userId) {
     const user = await getUserById(c.env, userId);
+    background(c, recordSessionCheck(c.env, c.req.raw, lookup, userId));
     return c.json({
       user_id: userId,
       is_authenticated: true,
@@ -266,6 +324,7 @@ app.get('/api/me', async (c) => {
     });
   }
   const anonId = await resolveAnonymousIdForRequest(c);
+  background(c, recordSessionCheck(c.env, c.req.raw, lookup, anonId));
   return c.json({
     user_id: anonId ?? null,
     is_authenticated: false,
@@ -777,6 +836,15 @@ app.post('/api/auth/signup', async (c) => {
 
   const session = await createSession(c.env, userId);
   appendSetCookie(c, buildSessionCookie(c.env, session.token));
+  background(
+    c,
+    recordSessionCreated(c.env, c.req.raw, {
+      sessionId: session.id,
+      userId: userId,
+      method: 'email_password',
+      expiresAt: session.expiresAt,
+    })
+  );
 
   await recordEvent(
     c.env,
@@ -846,6 +914,15 @@ app.post('/api/auth/login', async (c) => {
   }
   const session = await createSession(c.env, record.user_id as string);
   appendSetCookie(c, buildSessionCookie(c.env, session.token));
+  background(
+    c,
+    recordSessionCreated(c.env, c.req.raw, {
+      sessionId: session.id,
+      userId: record.user_id as string,
+      method: 'email_password',
+      expiresAt: session.expiresAt,
+    })
+  );
 
   await recordEvent(
     c.env,
@@ -1014,6 +1091,15 @@ app.post('/api/auth/email/code/verify', async (c) => {
 
   const session = await createSession(c.env, userId);
   appendSetCookie(c, buildSessionCookie(c.env, session.token));
+  background(
+    c,
+    recordSessionCreated(c.env, c.req.raw, {
+      sessionId: session.id,
+      userId: userId,
+      method: 'email_code',
+      expiresAt: session.expiresAt,
+    })
+  );
 
   if (createdAccount) {
     await recordEvent(
@@ -1080,6 +1166,15 @@ app.post('/api/auth/google', async (c) => {
 
   const session = await createSession(c.env, userId);
   appendSetCookie(c, buildSessionCookie(c.env, session.token));
+  background(
+    c,
+    recordSessionCreated(c.env, c.req.raw, {
+      sessionId: session.id,
+      userId: userId,
+      method: 'google',
+      expiresAt: session.expiresAt,
+    })
+  );
 
   if (createdAccount) {
     await recordEvent(
@@ -1098,8 +1193,16 @@ app.post('/api/auth/google', async (c) => {
 app.post('/api/auth/logout', async (c) => {
   const cookies = parseCookies(c.req.header('cookie') ?? null);
   const token = cookies.session ?? null;
+  const lookup = await inspectSession(c.env, token);
+  const identified =
+    lookup.outcome === 'valid' || lookup.outcome === 'expired'
+      ? { sessionId: lookup.sessionId, userId: lookup.userId }
+      : { sessionId: null, userId: null };
   await clearSession(c.env, token);
   appendSetCookie(c, buildSessionCookie(c.env, '', { clear: true }));
+  // Recorded so a sign-out the reader asked for is never read as a failure —
+  // by name, so the session is excluded from the ones that went quiet.
+  background(c, recordSessionCleared(c.env, c.req.raw, identified));
   return c.json({ ok: true });
 });
 
@@ -1338,6 +1441,55 @@ app.get('/api/admin/logs', async (c) => {
       ...log,
       metadata: log.metadata_json ? JSON.parse(log.metadata_json) : null,
     })),
+  });
+});
+
+/**
+ * Everything the Sessions screen needs, computed here.
+ *
+ * It previously paged the raw log into the browser and aggregated there, which
+ * put a hard row cap between the screen and the truth: a handful of active
+ * readers could fill it with routine records and silently push the losses out
+ * of the window being asked about. Summarising is the database's job, and the
+ * answer is small enough to read on a phone.
+ */
+app.get('/api/admin/session-diagnostics', async (c) => {
+  const cookies = parseCookies(c.req.header('cookie') ?? null);
+  const userId = await getSessionUserId(c.env, cookies.session ?? null);
+  if (!userId) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const user = await getUserById(c.env, userId);
+  if (!user || user.is_admin !== 1) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+
+  const days = Math.min(Math.max(Number(c.req.query('days')) || 7, 1), 90);
+  const since = DateTime.utc().minus({ days }).toISO() as string;
+
+  const losses = await queryLogs(c.env, {
+    category: 'auth',
+    level: 'warn',
+    since,
+    limit: 500,
+  });
+
+  const quiet = await findQuietSessions(c.env, {
+    quietDays: QUIET_SESSION_DAYS,
+    windowDays: days,
+  });
+
+  return c.json({
+    since,
+    days,
+    quietDays: QUIET_SESSION_DAYS,
+    losses: losses.map((entry) => ({
+      id: entry.id,
+      timestamp: entry.timestamp,
+      user_id: entry.user_id,
+      metadata: entry.metadata_json ? JSON.parse(entry.metadata_json) : null,
+    })),
+    quiet,
   });
 });
 
@@ -2507,6 +2659,12 @@ export default {
     if (isAutoApproveEnabled(env.ENRICHMENT_AUTO_APPROVE)) {
       ctx.waitUntil(autoApproveReviewQueue(env));
     }
+
+    // Collect what the diagnostics keep alive. Neither can be cleaned up by a
+    // request: a reader who stops coming back never presents the token that
+    // would purge their session, and nobody visits to expire a log row.
+    ctx.waitUntil(purgeExpiredSessions(env));
+    ctx.waitUntil(purgeExpiredAuthLogs(env));
   },
 };
 

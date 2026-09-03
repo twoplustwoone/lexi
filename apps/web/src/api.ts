@@ -17,7 +17,14 @@ import {
   saveHistory,
   saveSettings,
 } from './storage';
-import { getAnonymousId, getTimeZone, setAnonymousId } from './identity';
+import {
+  getAnonymousId,
+  getDisplayMode,
+  getSessionExpectation,
+  getTimeZone,
+  setAnonymousId,
+  setSessionExpectation,
+} from './identity';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
 
@@ -72,6 +79,11 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
   const headers = new Headers(options.headers || {});
   headers.set('Content-Type', 'application/json');
   headers.set('X-Timezone', getTimeZone());
+  // Diagnostics for unwanted sign-outs. The server cannot see whether this
+  // device thought it was signed in, or whether it is running installed, and
+  // both are needed to tell a dropped cookie from cleared storage.
+  headers.set('X-Client-Session', getSessionExpectation());
+  headers.set('X-Client-Display', getDisplayMode());
 
   const response = await fetch(`${API_BASE}${path}`, {
     ...options,
@@ -147,7 +159,22 @@ export async function fetchMe(): Promise<{
   is_anonymous: boolean;
   is_admin: boolean;
 }> {
-  return apiFetch('/me');
+  const me = await apiFetch<{
+    user_id: string | null;
+    is_authenticated: boolean;
+    is_anonymous: boolean;
+    is_admin: boolean;
+  }>('/me');
+  // Kept in step with the server on every ask, in both directions.
+  //
+  // Setting it here as well as at sign-in means a device that was already
+  // signed in before this shipped still gets flagged, so its next sign-out is
+  // legible. Clearing it is what makes a loss count once: the flag says "I
+  // believe I have a session", and the server has just said otherwise, so
+  // every later app open would otherwise report the same loss again — enough
+  // repeats from one reader to outweigh everyone else and pick the verdict.
+  setSessionExpectation(me.is_authenticated);
+  return me;
 }
 
 export async function fetchTodayWord(): Promise<DailyWordPayload> {
@@ -277,6 +304,7 @@ export function getClientType(): 'web' | 'pwa' {
 
 export async function signUpEmailPassword(email: string, password: string): Promise<void> {
   await apiFetch('/auth/signup', { method: 'POST', body: JSON.stringify({ email, password }) });
+  setSessionExpectation(true);
 }
 
 export async function loginEmailPassword(identifier: string, password: string): Promise<void> {
@@ -284,6 +312,7 @@ export async function loginEmailPassword(identifier: string, password: string): 
     method: 'POST',
     body: JSON.stringify({ identifier, password }),
   });
+  setSessionExpectation(true);
 }
 
 export async function getAuthMethods(email: string): Promise<AuthMethodsResponse> {
@@ -302,14 +331,18 @@ export async function verifyEmailCode(email: string, code: string): Promise<void
     method: 'POST',
     body: JSON.stringify({ email, code }),
   });
+  setSessionExpectation(true);
 }
 
 export async function loginWithGoogle(idToken: string): Promise<void> {
   await apiFetch('/auth/google', { method: 'POST', body: JSON.stringify({ id_token: idToken }) });
+  setSessionExpectation(true);
 }
 
 export async function logout(): Promise<void> {
   await apiFetch('/auth/logout', { method: 'POST' });
+  // Cleared last: from here on, a missing session is expected rather than a fault.
+  setSessionExpectation(false);
 }
 
 export interface AdminNotifyResult {
@@ -451,7 +484,7 @@ export async function fetchAdminEventStats(period: string = '7d'): Promise<Admin
 }
 
 export type AdminLogLevel = 'info' | 'warn' | 'error';
-export type AdminLogCategory = 'cron' | 'push' | 'subscription' | 'vapid' | 'rate_limit';
+export type AdminLogCategory = 'cron' | 'push' | 'subscription' | 'vapid' | 'rate_limit' | 'auth';
 
 export interface AdminLogEntry {
   id: string;
@@ -483,6 +516,41 @@ export async function fetchAdminLogs(
   if (options.offset) params.set('offset', String(options.offset));
   const query = params.toString();
   return apiFetch<{ logs: AdminLogEntry[] }>(`/admin/logs${query ? `?${query}` : ''}`);
+}
+
+export interface SessionLossRecord {
+  id: string;
+  timestamp: string;
+  user_id: string | null;
+  metadata: Record<string, unknown> | null;
+}
+
+export interface QuietSessionRecord {
+  sessionId: string;
+  userId: string;
+  lastSeenAt: string;
+  expiresAt: string;
+  daysLeftWhenLastSeen: number;
+}
+
+export interface SessionDiagnosticsResponse {
+  since: string;
+  days: number;
+  quietDays: number;
+  losses: SessionLossRecord[];
+  quiet: QuietSessionRecord[];
+}
+
+/**
+ * The Sessions screen's whole payload, summarised by the API.
+ *
+ * Deliberately not assembled from `fetchAdminLogs` here: aggregating in the
+ * browser meant paging thousands of routine rows onto a phone, and a row cap
+ * between the screen and the window it claims to show is a cap that silently
+ * drops the losses being looked for.
+ */
+export async function fetchSessionDiagnostics(days: number): Promise<SessionDiagnosticsResponse> {
+  return apiFetch<SessionDiagnosticsResponse>(`/admin/session-diagnostics?days=${days}`);
 }
 
 const LOG_PAGE_SIZE = 500;
