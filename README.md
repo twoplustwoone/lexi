@@ -101,6 +101,10 @@ Local dev admin seeding uses `ADMIN_USERNAME` and `ADMIN_PASSWORD` from `apps/ap
 - `npm run seed:admin` (local)
 - `npm run seed:admin -- --remote` (remote, used in deploy workflow)
 
+Seeding assumes the schema is already there. Apply migrations first with
+`npm run db:migrate --prefix apps/api`; the deploy workflow applies them in its
+own step before the worker goes out.
+
 If the admin user already exists, the seed script skips creation unless `ADMIN_FORCE_SEED` is set to a truthy value to recreate/update the admin credentials.
 
 Admin accounts see a "Send test notification" button in the Account screen.
