@@ -1027,8 +1027,13 @@ app.post('/api/auth/email/code/verify', async (c) => {
     return emailLimit;
   }
   const record = await c.env.DB.prepare(
+    // `created_at` is millisecond-resolution, so two codes requested in the
+    // same millisecond — a double-tap on "resend" is enough — sort equal, and
+    // the one picked here would be arbitrary. That is the code the reader is
+    // then required to type. `rowid` breaks the tie by insertion order, so
+    // this is always genuinely the newest.
     `SELECT * FROM auth_codes WHERE target = ? AND purpose = 'email_code' AND consumed_at IS NULL
-     ORDER BY created_at DESC LIMIT 1`
+     ORDER BY created_at DESC, rowid DESC LIMIT 1`
   )
     .bind(parsed.email)
     .first();

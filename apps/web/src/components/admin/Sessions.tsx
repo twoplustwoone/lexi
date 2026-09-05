@@ -43,6 +43,7 @@ const WINDOWS: Array<{ value: Window; label: string; days: number }> = [
 
 /** The reading when nothing was observed but sessions stopped being used. */
 const QUIET_READING: SessionDiagnosis = {
+  kind: 'went_quiet',
   statement:
     'Sessions are going quiet while still valid: they stopped being presented well before they expired, with no sign-out recorded.',
   standing: 'narrowed',
@@ -134,11 +135,14 @@ export function Sessions({ headerSlot }: { headerSlot: (meta: string) => void })
     const groups = new Map<string, { diagnosis: SessionDiagnosis; count: number }>();
     for (const loss of losses) {
       const diagnosis = diagnoseSession(evidenceOf(loss));
-      const group = groups.get(diagnosis.statement);
+      // Keyed on `kind`, never on the sentence. Grouping on prose split every
+      // loss into its own group the moment a statement mentioned a specific
+      // day count, and the dominant cause was then whichever singleton won.
+      const group = groups.get(diagnosis.kind);
       if (group) {
         group.count += 1;
       } else {
-        groups.set(diagnosis.statement, { diagnosis, count: 1 });
+        groups.set(diagnosis.kind, { diagnosis, count: 1 });
       }
     }
     let top: { diagnosis: SessionDiagnosis; count: number } | null = null;
@@ -224,7 +228,7 @@ export function Sessions({ headerSlot }: { headerSlot: (meta: string) => void })
             key={loss.id}
             className={`flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b py-[11px] ${DIVIDER} last:border-b-0`}
           >
-            <span className="tabular w-[92px] flex-none text-[12px] text-ink/[0.52]">
+            <span className="tabular w-[104px] flex-none whitespace-nowrap text-[12px] text-ink/[0.52]">
               {formatDateTime(loss.timestamp)}
             </span>
             <StatusEnum status={observationOf(loss)} className="flex-none" />
@@ -248,7 +252,7 @@ export function Sessions({ headerSlot }: { headerSlot: (meta: string) => void })
               key={session.sessionId}
               className={`flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b py-[11px] ${DIVIDER} last:border-b-0`}
             >
-              <span className="tabular w-[92px] flex-none text-[12px] text-ink/[0.52]">
+              <span className="tabular w-[104px] flex-none whitespace-nowrap text-[12px] text-ink/[0.52]">
                 {formatDateTime(session.lastSeenAt)}
               </span>
               <StatusEnum status="went_quiet" className="flex-none" />

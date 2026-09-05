@@ -152,7 +152,16 @@ export async function queryLogs(env: Env, params: LogQueryParams = {}): Promise<
   if (conditions.length > 0) {
     query += ' WHERE ' + conditions.join(' AND ');
   }
-  query += ' ORDER BY timestamp DESC LIMIT ? OFFSET ?';
+  // `timestamp` is an ISO string at millisecond resolution, so rows written
+  // inside the same millisecond compare equal and the sort is not total.
+  // SQLite may then return them in either order — which quietly inverted "most
+  // recent first" for ties, and, because this pages with LIMIT/OFFSET, let a
+  // page boundary landing inside a tie repeat one row and drop another.
+  //
+  // `rowid` is SQLite's implicit insertion counter on a table like this one.
+  // It breaks the tie in the order the rows were actually written, and makes
+  // the ordering total, so paging is stable.
+  query += ' ORDER BY timestamp DESC, rowid DESC LIMIT ? OFFSET ?';
   bindings.push(Math.min(limit, 500), offset);
 
   const result = await env.DB.prepare(query)
