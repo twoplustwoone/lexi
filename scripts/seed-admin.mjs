@@ -140,13 +140,18 @@ writeFileSync(tempPath, sql);
 
 const wrangler = getWranglerCommand();
 
+// Deliberately does not apply migrations.
+//
+// It used to, and that was the whole reason a missing migration was hard to
+// see: the database got migrated as a side effect of a script named for
+// seeding an admin user, which in the deploy runs *after* the worker is
+// already live. New code met the old schema in the gap between the two.
+//
+// Migrations now have one owner — the deploy applies them before the worker,
+// and `npm run db:migrate --prefix apps/api` does it locally. Seeding assumes
+// the schema is already there and fails loudly if it is not, which is the
+// correct behaviour for a script that is not in charge of it.
 try {
-  execSync(
-    `${wrangler} d1 migrations apply word_of_the_day ${modeFlag} ${envFlag} --cwd apps/api`,
-    {
-      stdio: 'inherit',
-    }
-  );
   execSync(
     `${wrangler} d1 execute word_of_the_day --file ${tempPath} ${modeFlag} ${envFlag} --cwd apps/api`,
     {
