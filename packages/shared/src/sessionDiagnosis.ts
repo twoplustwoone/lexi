@@ -52,8 +52,39 @@ export interface SessionEvidence {
   termDays?: number | null;
 }
 
+/**
+ * A stable name for the explanation, for grouping losses that share a cause.
+ *
+ * Grouping cannot key off the prose. An earlier revision did, and because the
+ * sentence named the specific day count, two sessions that expired early — the
+ * same cause, the same fix — never grouped, so the tally that picks what the
+ * screen concludes counted every loss as its own kind and reported a dominant
+ * cause of one.
+ */
+export type SessionDiagnosisKind =
+  | 'accepted'
+  | 'expired_full_term'
+  | 'expired_early'
+  | 'expired_unknown_term'
+  | 'session_row_missing'
+  | 'cookie_withheld_by_samesite'
+  | 'cookie_absent_cross_site'
+  | 'cookie_absent_same_site'
+  | 'nothing_lost'
+  /** Not a record at all: the cross-record inference drawn in the admin screen. */
+  | 'went_quiet'
+  | 'unrecognised';
+
 export interface SessionDiagnosis {
-  /** What the evidence supports, in one sentence. */
+  /** Stable across records that share a cause; group on this, never on prose. */
+  kind: SessionDiagnosisKind;
+  /**
+   * What the evidence supports, in one sentence.
+   *
+   * Written about the cause rather than about one record, because it is only
+   * ever rendered as the heading over a group of them. Specifics belong on the
+   * rows, which carry the evidence for each.
+   */
   statement: string;
   /**
    * `determined` — the evidence admits one explanation.
@@ -75,15 +106,17 @@ function diagnoseExpired(evidence: SessionEvidence): SessionDiagnosis {
   // cannot make this read wrong. Only the remedy varies.
   if (typeof ageDays !== 'number' || typeof termDays !== 'number' || termDays <= 0) {
     return {
-      statement: 'The session reached its expiry and was refused.',
+      kind: 'expired_unknown_term',
+      statement: 'Sessions are reaching their expiry and being refused.',
       standing: 'determined',
-      nextStep: 'Compare the age it reached against SESSION_TTL_DAYS.',
+      nextStep: 'Compare the age each one reached against SESSION_TTL_DAYS.',
     };
   }
 
   if (ageDays >= termDays * FULL_TERM) {
     return {
-      statement: `The session ran its full term of ${termDays} days and expired.`,
+      kind: 'expired_full_term',
+      statement: 'Sessions are running their full term and expiring.',
       standing: 'determined',
       nextStep:
         'Nothing is broken — the term is simply short for how people use the app. Raise SESSION_TTL_DAYS, or renew a session on use so an active reader is never signed out.',
@@ -91,10 +124,14 @@ function diagnoseExpired(evidence: SessionEvidence): SessionDiagnosis {
   }
 
   return {
-    statement: `The session expired after ${ageDays} days, well short of the ${termDays} it was issued for.`,
+    kind: 'expired_early',
+    // No day count here: this heads a group, and one member's number read as
+    // the group's is how a reading starts saying something not quite true.
+    // The per-record ages are on the rows.
+    statement: 'Sessions are expiring well short of the term they were issued for.',
     standing: 'determined',
     nextStep:
-      'The row was written with a shorter expiry than its term implies. Check what SESSION_TTL_DAYS resolved to when the session was created.',
+      'The rows were written with a shorter expiry than their term implies. Check what SESSION_TTL_DAYS resolved to when these sessions were created.',
   };
 }
 
@@ -120,7 +157,8 @@ function diagnoseMissingCookie(evidence: SessionEvidence): SessionDiagnosis {
    */
   if (crossSite && (sameSite === 'lax' || sameSite === 'strict')) {
     return {
-      statement: `The request was cross-site and the cookie is configured SameSite=${evidence.configuredSameSite}, which would withhold it — though a cookie already deleted or evicted looks exactly the same from here.`,
+      kind: 'cookie_withheld_by_samesite',
+      statement: `The requests were cross-site and the cookie is configured SameSite=${evidence.configuredSameSite}, which would withhold it — though a cookie already deleted or evicted looks exactly the same from here.`,
       standing: 'narrowed',
       nextStep:
         'Setting SESSION_COOKIE_SAMESITE to None removes the one candidate you can act on, and is worth doing regardless while the API is on another site. If losses continue after that, the cookie was going missing on its own.',
@@ -131,8 +169,9 @@ function diagnoseMissingCookie(evidence: SessionEvidence): SessionDiagnosis {
     // Policy is already None, so SameSite is not among the candidates at all.
     // Recommending it would send someone to change a setting already correct.
     return {
+      kind: 'cookie_absent_cross_site',
       statement:
-        'The request was cross-site with the policy already None, so SameSite did not withhold it: the cookie was blocked as third-party, deleted, or evicted.',
+        'The requests were cross-site with the policy already None, so SameSite did not withhold it: the cookie was blocked as third-party, deleted, or evicted.',
       standing: 'narrowed',
       nextStep:
         'Browsers that block third-party cookies will not send this one from another site at all. Serving the API from the app’s own domain is the only reliable answer to that.',
@@ -140,8 +179,9 @@ function diagnoseMissingCookie(evidence: SessionEvidence): SessionDiagnosis {
   }
 
   return {
+    kind: 'cookie_absent_same_site',
     statement:
-      'A device that had signed in returned without the cookie, on a request the browser did not call cross-site: it lapsed, was cleared, or the site’s storage was evicted.',
+      'Devices that had signed in returned without the cookie, on requests the browser did not call cross-site: it lapsed, was cleared, or the site’s storage was evicted.',
     standing: 'narrowed',
     nextStep:
       'Check the cookie’s Max-Age against how long it survives. If it is being outlived, the browser is discarding it — which is what Safari and iOS do to a site they consider idle, hardest of all to an installed app.',
@@ -151,7 +191,7 @@ function diagnoseMissingCookie(evidence: SessionEvidence): SessionDiagnosis {
 export function diagnoseSession(evidence: SessionEvidence): SessionDiagnosis {
   switch (evidence.observation) {
     case 'ok':
-      return { statement: 'The session was accepted.', standing: 'determined' };
+      return { kind: 'accepted', statement: 'The session was accepted.', standing: 'determined' };
 
     case 'expired':
       return diagnoseExpired(evidence);
@@ -159,8 +199,9 @@ export function diagnoseSession(evidence: SessionEvidence): SessionDiagnosis {
     case 'unknown_token':
       // That the row is absent is settled; why it is absent is not.
       return {
+        kind: 'session_row_missing',
         statement:
-          'The cookie named a session with no row behind it: either the row was deleted, or SESSION_SECRET changed.',
+          'Cookies named sessions with no row behind them: either the rows were deleted, or SESSION_SECRET changed.',
         standing: 'narrowed',
         nextStep:
           'Every session hash derives from SESSION_SECRET, so rotating it invalidates every session at once. If several readers lost their sessions at the same moment, that is the one to check first.',
@@ -171,6 +212,7 @@ export function diagnoseSession(evidence: SessionEvidence): SessionDiagnosis {
 
     case 'anonymous':
       return {
+        kind: 'nothing_lost',
         statement: 'No session was claimed, so nothing was lost.',
         standing: 'determined',
       };
@@ -192,6 +234,7 @@ export function diagnoseSession(evidence: SessionEvidence): SessionDiagnosis {
        */
       const unrecognised: never = evidence.observation;
       return {
+        kind: 'unrecognised',
         statement: `This loss was recorded as "${String(unrecognised)}", which this version does not recognise.`,
         standing: 'narrowed',
         nextStep:

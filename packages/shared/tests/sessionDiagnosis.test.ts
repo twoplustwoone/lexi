@@ -80,7 +80,7 @@ describe('diagnoseSession', () => {
       // SESSION_TTL_DAYS is raised to 30, and must not be reported as having
       // died early because the configuration moved underneath it.
       const diagnosis = diagnoseSession({ observation: 'expired', ageDays: 7, termDays: 7 });
-      expect(diagnosis.statement).toContain('full term of 7 days');
+      expect(diagnosis.kind).toBe('expired_full_term');
     });
 
     it('separates running the full term from ending early', () => {
@@ -91,7 +91,7 @@ describe('diagnoseSession', () => {
       // The reported symptom. If this ever shows up, the term is not the cause
       // and raising it would fix nothing.
       const early = diagnoseSession({ observation: 'expired', ageDays: 2, termDays: 30 });
-      expect(early.statement).toContain('2 days');
+      expect(early.kind).toBe('expired_early');
       expect(early.statement).toContain('short');
     });
 
@@ -148,6 +148,46 @@ describe('diagnoseSession', () => {
     for (const diagnosis of actionable) {
       expect(diagnosis.nextStep).toBeTruthy();
     }
+  });
+});
+
+describe('grouping', () => {
+  it('gives losses that share a cause the same kind, whatever their specifics', () => {
+    // The screen tallies losses by kind to decide what it concludes. When that
+    // key came from the sentence, and the sentence named the day count, two
+    // sessions that expired early — same cause, same fix — never grouped, and
+    // the dominant cause was reported as a group of one.
+    const twoDays = diagnoseSession({ observation: 'expired', ageDays: 2, termDays: 30 });
+    const threeDays = diagnoseSession({ observation: 'expired', ageDays: 3, termDays: 30 });
+
+    expect(twoDays.kind).toBe('expired_early');
+    expect(threeDays.kind).toBe(twoDays.kind);
+
+    // Running the full term is a different cause with a different fix, so it
+    // must not group with them.
+    expect(diagnoseSession({ observation: 'expired', ageDays: 30, termDays: 30 }).kind).toBe(
+      'expired_full_term'
+    );
+  });
+
+  it('does not name a specific record in a statement that heads a group', () => {
+    const early = diagnoseSession({ observation: 'expired', ageDays: 2, termDays: 30 });
+    expect(early.statement).not.toContain('2');
+  });
+
+  it('separates the cross-site causes by the policy in force', () => {
+    const lax = diagnoseSession({
+      observation: 'no_session_cookie',
+      secFetchSite: 'cross-site',
+      configuredSameSite: 'Lax',
+    });
+    const none = diagnoseSession({
+      observation: 'no_session_cookie',
+      secFetchSite: 'cross-site',
+      configuredSameSite: 'None',
+    });
+    expect(lax.kind).toBe('cookie_withheld_by_samesite');
+    expect(none.kind).toBe('cookie_absent_cross_site');
   });
 });
 
