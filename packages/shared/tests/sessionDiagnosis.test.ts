@@ -151,6 +151,23 @@ describe('diagnoseSession', () => {
   });
 });
 
+describe('an observation from another version', () => {
+  it('degrades to a readable row instead of taking the screen down', () => {
+    // The records are append-only and long-lived: rename an observation and
+    // every row already written still carries the old word. Returning nothing
+    // here would throw on `.statement` in the admin screen, on exactly the
+    // rows someone opened it to read.
+    const diagnosis = diagnoseSession({
+      observation: 'from_a_later_version' as never,
+    });
+
+    expect(diagnosis).toBeDefined();
+    expect(diagnosis.standing).toBe('narrowed');
+    expect(diagnosis.statement).toContain('from_a_later_version');
+    expect(diagnosis.nextStep).toBeTruthy();
+  });
+});
+
 describe('isUnwantedSessionLoss', () => {
   it('counts the three losses and nothing else', () => {
     expect(isUnwantedSessionLoss('expired')).toBe(true);

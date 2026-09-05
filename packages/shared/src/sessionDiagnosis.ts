@@ -174,6 +174,30 @@ export function diagnoseSession(evidence: SessionEvidence): SessionDiagnosis {
         statement: 'No session was claimed, so nothing was lost.',
         standing: 'determined',
       };
+
+    default: {
+      /**
+       * Records outlive the code that reads them.
+       *
+       * An observation is written into an append-only table and read back
+       * weeks later by whatever version happens to be deployed then. Rename
+       * one, and every row already written still carries the old word — so
+       * this function is always liable to meet a vocabulary it does not know,
+       * and returning nothing for it would take the screen down with a type
+       * error on the very rows someone opened it to read.
+       *
+       * The annotation is `never` on purpose: adding an observation to the
+       * union without handling it above fails the typecheck here rather than
+       * quietly landing in this branch.
+       */
+      const unrecognised: never = evidence.observation;
+      return {
+        statement: `This loss was recorded as "${String(unrecognised)}", which this version does not recognise.`,
+        standing: 'narrowed',
+        nextStep:
+          'Written by a different version of the API than the one reading it. The record itself is intact — the raw evidence on the row still says what arrived.',
+      };
+    }
   }
 }
 
