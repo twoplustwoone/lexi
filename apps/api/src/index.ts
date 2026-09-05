@@ -111,23 +111,56 @@ function appendSetCookie(
 }
 
 /**
- * Run a side errand without holding up the response. Diagnostics write a D1
- * row per request; a reader waiting on their word should never pay for that.
+ * Run work that outlives the response it was started from.
+ *
+ * Every detached promise in this file goes through here, and the reason is the
+ * catch rather than the scheduling. A promise nobody holds, that rejects, is
+ * an unhandled rejection: in the Worker that surfaces as an error with nothing
+ * attached saying what was running, and under the test runner it fails a whole
+ * file without naming a test, which is close to undebuggable. Catching at the
+ * point of detachment turns both into one line that says what broke.
+ *
+ * Swallowing is not the point either — the failure is logged, because
+ * background work that quietly stops is how a diagnostic ends up reporting
+ * nothing and looking like good news.
  */
-function background(c: { executionCtx?: ExecutionContext }, work: Promise<unknown>): void {
-  const settled = work.catch(() => undefined);
+function detach(ctx: ExecutionContext | undefined, label: string, work: Promise<unknown>): void {
+  const guarded = work.catch((error: unknown) => {
+    console.error(
+      JSON.stringify({
+        level: 'error',
+        message: `Background work failed: ${label}`,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    );
+  });
+
+  if (ctx && 'waitUntil' in ctx) {
+    ctx.waitUntil(guarded);
+    return;
+  }
+  // Nothing to keep the runtime alive for it; it is still guarded.
+  void guarded;
+}
+
+/**
+ * The same, for a request handler. Diagnostics write a D1 row per request; a
+ * reader waiting on their word should never pay for that.
+ */
+function background(
+  c: { executionCtx?: ExecutionContext },
+  label: string,
+  work: Promise<unknown>
+): void {
+  let ctx: ExecutionContext | undefined;
   try {
     // Hono throws rather than returning undefined when there is no execution
-    // context, and a diagnostic is never worth failing a request over.
-    const ctx = c.executionCtx;
-    if (ctx && 'waitUntil' in ctx) {
-      ctx.waitUntil(settled);
-      return;
-    }
+    // context, and a side errand is never worth failing a request over.
+    ctx = c.executionCtx;
   } catch {
-    // Falls through to letting the promise run unawaited.
+    ctx = undefined;
   }
-  void settled;
+  detach(ctx, label, work);
 }
 
 function normalizeKeyPart(value: string): string {
@@ -315,7 +348,7 @@ app.get('/api/me', async (c) => {
 
   if (userId) {
     const user = await getUserById(c.env, userId);
-    background(c, recordSessionCheck(c.env, c.req.raw, lookup, userId));
+    background(c, 'session check', recordSessionCheck(c.env, c.req.raw, lookup, userId));
     return c.json({
       user_id: userId,
       is_authenticated: true,
@@ -324,7 +357,7 @@ app.get('/api/me', async (c) => {
     });
   }
   const anonId = await resolveAnonymousIdForRequest(c);
-  background(c, recordSessionCheck(c.env, c.req.raw, lookup, anonId));
+  background(c, 'session check', recordSessionCheck(c.env, c.req.raw, lookup, anonId));
   return c.json({
     user_id: anonId ?? null,
     is_authenticated: false,
@@ -408,11 +441,7 @@ app.get('/api/word/today', async (c) => {
 
   // Trigger background enrichment if details are pending
   if (detailsStatus === 'pending') {
-    // Use waitUntil to enrich in background
-    const ctx = c.executionCtx;
-    if (ctx && 'waitUntil' in ctx) {
-      ctx.waitUntil(triggerSingleEnrichment(c.env, wordPoolId));
-    }
+    background(c, 'word enrichment', triggerSingleEnrichment(c.env, wordPoolId));
   }
 
   return c.json({
@@ -838,6 +867,7 @@ app.post('/api/auth/signup', async (c) => {
   appendSetCookie(c, buildSessionCookie(c.env, session.token));
   background(
     c,
+    'sign-in record',
     recordSessionCreated(c.env, c.req.raw, {
       sessionId: session.id,
       userId: userId,
@@ -916,6 +946,7 @@ app.post('/api/auth/login', async (c) => {
   appendSetCookie(c, buildSessionCookie(c.env, session.token));
   background(
     c,
+    'sign-in record',
     recordSessionCreated(c.env, c.req.raw, {
       sessionId: session.id,
       userId: record.user_id as string,
@@ -1093,6 +1124,7 @@ app.post('/api/auth/email/code/verify', async (c) => {
   appendSetCookie(c, buildSessionCookie(c.env, session.token));
   background(
     c,
+    'sign-in record',
     recordSessionCreated(c.env, c.req.raw, {
       sessionId: session.id,
       userId: userId,
@@ -1168,6 +1200,7 @@ app.post('/api/auth/google', async (c) => {
   appendSetCookie(c, buildSessionCookie(c.env, session.token));
   background(
     c,
+    'sign-in record',
     recordSessionCreated(c.env, c.req.raw, {
       sessionId: session.id,
       userId: userId,
@@ -1202,7 +1235,7 @@ app.post('/api/auth/logout', async (c) => {
   appendSetCookie(c, buildSessionCookie(c.env, '', { clear: true }));
   // Recorded so a sign-out the reader asked for is never read as a failure —
   // by name, so the session is excluded from the ones that went quiet.
-  background(c, recordSessionCleared(c.env, c.req.raw, identified));
+  background(c, 'sign-out record', recordSessionCleared(c.env, c.req.raw, identified));
   return c.json({ ok: true });
 });
 
@@ -2649,22 +2682,22 @@ export default {
     await env.KV.put('cron:run_count', String(runCount));
 
     // Process notification schedules
-    ctx.waitUntil(processDueSchedules(env));
+    detach(ctx, 'notification schedules', processDueSchedules(env));
 
     // Process word enrichment queue
-    ctx.waitUntil(processEnrichmentQueue(env));
+    detach(ctx, 'enrichment queue', processEnrichmentQueue(env));
 
     // Drain the review backlog: words enriched before auto-approval existed are
     // stranded at pending_review and would otherwise never be served.
     if (isAutoApproveEnabled(env.ENRICHMENT_AUTO_APPROVE)) {
-      ctx.waitUntil(autoApproveReviewQueue(env));
+      detach(ctx, 'review auto-approval', autoApproveReviewQueue(env));
     }
 
     // Collect what the diagnostics keep alive. Neither can be cleaned up by a
     // request: a reader who stops coming back never presents the token that
     // would purge their session, and nobody visits to expire a log row.
-    ctx.waitUntil(purgeExpiredSessions(env));
-    ctx.waitUntil(purgeExpiredAuthLogs(env));
+    detach(ctx, 'expired session sweep', purgeExpiredSessions(env));
+    detach(ctx, 'auth log sweep', purgeExpiredAuthLogs(env));
   },
 };
 
