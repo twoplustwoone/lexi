@@ -11,7 +11,8 @@
     "lint:fix": "eslint src --fix",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "db:migrate": "wrangler d1 migrations apply word_of_the_day --local"
+    "db:migrate": "wrangler d1 migrations apply word_of_the_day --local",
+    "db:migrate:remote": "wrangler d1 migrations apply word_of_the_day --remote --env production"
   },
   "dependencies": {
     "@noble/curves": "^1.4.0",
