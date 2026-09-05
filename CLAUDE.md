@@ -24,7 +24,7 @@ npm run validate         # Run lint + typecheck + test
 npm run db:migrate --prefix apps/api           # Apply D1 migrations locally
 npm run db:migrate:remote --prefix apps/api    # Apply them to production (the deploy runs this itself)
 npm run seed:words                              # Seed words to database
-npm run seed:admin                              # Create admin user (uses ADMIN_USERNAME/ADMIN_PASSWORD from .dev.vars)
+npm run seed:admin                              # Create admin user (uses ADMIN_USERNAME/ADMIN_PASSWORD from .dev.vars; run db:migrate first)
 npm run generate:vapid                          # Generate VAPID keys for push notifications
 ```
 
