@@ -5,7 +5,7 @@ import {
   SessionEvidence,
   SessionObservation,
   diagnoseSession,
-} from '@word-of-the-day/shared';
+} from '@lexi/shared';
 
 import {
   QuietSessionRecord,

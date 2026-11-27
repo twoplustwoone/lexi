@@ -1,4 +1,4 @@
-import type { WordCard } from '@word-of-the-day/shared';
+import type { WordCard } from '@lexi/shared';
 
 /**
  * Minimum length for a definition to be considered a usable word-of-the-day entry.

@@ -1,5 +1,5 @@
 {
-  "name": "@word-of-the-day/shared",
+  "name": "@lexi/shared",
   "version": "0.0.0",
   "private": true,
   "type": "module",

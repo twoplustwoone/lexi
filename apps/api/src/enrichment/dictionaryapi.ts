@@ -1,4 +1,4 @@
-import type { WordCard, WordMeaning } from '@word-of-the-day/shared';
+import type { WordCard, WordMeaning } from '@lexi/shared';
 import type { EnrichmentProvider, EnrichmentResult } from './provider';
 
 const BASE_URL = 'https://api.dictionaryapi.dev/api/v2/entries/en';

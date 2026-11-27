@@ -6,11 +6,12 @@
  * This script imports words from a SCOWL wordlist file into the word_pool table.
  *
  * Usage:
- *   node scripts/import-scowl.mjs <wordlist.txt> [--local|--remote]
+ *   node scripts/import-scowl.mjs <wordlist.txt> [--local|--remote] [--env production]
  *
  * Options:
  *   --local   Import to local D1 database (default)
- *   --remote  Import to remote D1 database
+ *   --remote  Import to remote D1 database (dev unless --env production)
+ *   --env     Wrangler environment, e.g. --env production
  *
  * The script:
  *   1. Reads words from the file
@@ -33,7 +34,8 @@ Usage: node scripts/import-scowl.mjs <wordlist.txt> [options]
 
 Options:
   --local   Import to local D1 database (default)
-  --remote  Import to remote D1 database
+  --remote  Import to remote D1 database (dev unless --env production)
+  --env     Wrangler environment, e.g. --env production
   --dry-run Show what would be imported without executing
 
 Example:
@@ -131,9 +133,13 @@ async function main() {
   let filePath = null;
   let isRemote = false;
   let isDryRun = false;
+  let envName = null;
 
-  for (const arg of args) {
-    if (arg === '--local') {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--env') {
+      envName = args[++i];
+    } else if (arg === '--local') {
       isRemote = false;
     } else if (arg === '--remote') {
       isRemote = true;
@@ -192,8 +198,8 @@ async function main() {
     process.exit(0);
   }
 
-  const envFlag = isRemote ? '--remote' : '--local';
-  console.log(`\nImporting to ${isRemote ? 'REMOTE' : 'LOCAL'} database...`);
+  const envFlag = `${isRemote ? '--remote' : '--local'}${envName ? ` --env ${envName}` : ''}`;
+  console.log(`\nImporting to ${isRemote ? 'REMOTE' : 'LOCAL'} ${envName ?? 'dev'} database...`);
 
   // Change to the api directory for wrangler commands
   const apiDir = path.join(process.cwd(), 'apps', 'api');
@@ -229,7 +235,7 @@ async function main() {
       const tempFile = `/tmp/scowl-batch-${Date.now()}.sql`;
       fs.writeFileSync(tempFile, batch);
 
-      execSync(`npx wrangler d1 execute word_of_the_day ${envFlag} --file="${tempFile}"`, {
+      execSync(`npx wrangler d1 execute DB ${envFlag} --file="${tempFile}"`, {
         stdio: 'inherit',
       });
 
@@ -248,7 +254,7 @@ async function main() {
   fs.writeFileSync(detailsTempFile, detailsSql);
 
   try {
-    execSync(`npx wrangler d1 execute word_of_the_day ${envFlag} --file="${detailsTempFile}"`, {
+    execSync(`npx wrangler d1 execute DB ${envFlag} --file="${detailsTempFile}"`, {
       stdio: 'inherit',
     });
     fs.unlinkSync(detailsTempFile);

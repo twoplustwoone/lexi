@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { isThirtyMinuteTime, type WordDifficulty } from '@word-of-the-day/shared';
+import { isThirtyMinuteTime, type WordDifficulty } from '@lexi/shared';
 
 import {
   fetchVapidKey,

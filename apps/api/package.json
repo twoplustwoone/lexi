@@ -1,5 +1,5 @@
 {
-  "name": "@word-of-the-day/api",
+  "name": "@lexi/api",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -11,13 +11,13 @@
     "lint:fix": "eslint src --fix",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "db:migrate": "wrangler d1 migrations apply word_of_the_day --local",
-    "db:migrate:remote": "wrangler d1 migrations apply word_of_the_day --remote --env production"
+    "db:migrate": "wrangler d1 migrations apply DB --local",
+    "db:migrate:remote": "wrangler d1 migrations apply DB --remote --env production"
   },
   "dependencies": {
     "@noble/curves": "^1.4.0",
     "@noble/hashes": "^1.4.0",
-    "@word-of-the-day/shared": "file:../../packages/shared",
+    "@lexi/shared": "file:../../packages/shared",
     "hono": "^4.5.2",
     "luxon": "^3.5.0",
     "zod": "^3.23.8"

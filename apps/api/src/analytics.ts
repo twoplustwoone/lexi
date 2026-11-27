@@ -1,6 +1,6 @@
 import { DateTime } from 'luxon';
 
-import { eventSchema } from '@word-of-the-day/shared';
+import { eventSchema } from '@lexi/shared';
 
 import { Env } from './env';
 

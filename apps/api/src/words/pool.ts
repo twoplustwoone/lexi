@@ -6,7 +6,7 @@ import type {
   WordDifficulty,
   WordPoolHealth,
   WordReviewStatus,
-} from '@word-of-the-day/shared';
+} from '@lexi/shared';
 import type { Env } from '../env';
 import type { WordPoolRow, WordDetailsRow } from '../enrichment/service';
 import { getCurrentCycle, getDifficultyOrderPreview, getDifficultySqlFilter } from './selection';

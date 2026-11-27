@@ -32,9 +32,7 @@ The app works without accounts by default, supports optional account creation la
    - `cp apps/web/.env.example apps/web/.env`
 3. Review required environment variables in `docs/ENVIRONMENT.md`
 4. Generate VAPID keys: `npm run generate:vapid`
-5. Create and configure D1:
-   - `wrangler d1 create word_of_the_day`
-   - Update `apps/api/wrangler.toml` with the D1 and KV IDs
+5. D1 and KV are already configured in `apps/api/wrangler.toml`. The default environment uses `lexi_dev` and a dev KV namespace. `--env production` uses the production database and KV. Plain `wrangler dev` and `--local` commands use local state in `apps/api/.wrangler`, and never touch either remote database.
 6. Apply migrations (includes seeded words): `npm run db:migrate --prefix apps/api`
 7. (Optional) Seed words + admin: `npm run seed:words`
 
@@ -99,7 +97,8 @@ This starts:
 Local dev admin seeding uses `ADMIN_USERNAME` and `ADMIN_PASSWORD` from `apps/api/.dev.vars`:
 
 - `npm run seed:admin` (local)
-- `npm run seed:admin -- --remote` (remote, used in deploy workflow)
+- `npm run seed:admin -- --remote` (remote dev database)
+- `npm run seed:admin -- --remote --env production` (production, used in deploy workflow)
 
 Seeding assumes the schema is already there. Apply migrations first with
 `npm run db:migrate --prefix apps/api`; the deploy workflow applies them in its

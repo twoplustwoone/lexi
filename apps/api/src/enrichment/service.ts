@@ -1,5 +1,5 @@
 import { DateTime } from 'luxon';
-import type { WordCard, WordDetailsStatus, WordReviewStatus } from '@word-of-the-day/shared';
+import type { WordCard, WordDetailsStatus, WordReviewStatus } from '@lexi/shared';
 import type { Env } from '../env';
 import type { EnrichmentProvider, EnrichmentResult } from './provider';
 import { DictionaryApiProvider } from './dictionaryapi';

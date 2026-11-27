@@ -1,4 +1,4 @@
-import { DEFAULT_PREFERENCES, normalizePreferences } from '@word-of-the-day/shared';
+import { DEFAULT_PREFERENCES, normalizePreferences } from '@lexi/shared';
 
 import { Env } from '../env';
 

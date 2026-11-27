@@ -1,5 +1,5 @@
 import { useState } from 'preact/hooks';
-import type { WordCard, WordDetailsStatus } from '@word-of-the-day/shared';
+import type { WordCard, WordDetailsStatus } from '@lexi/shared';
 
 import { PronounceButton } from './PronounceButton';
 

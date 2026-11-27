@@ -1,6 +1,6 @@
 import { DateTime } from 'luxon';
 
-import { getLocalDateKey, normalizePreferences } from '@word-of-the-day/shared';
+import { getLocalDateKey, normalizePreferences } from '@lexi/shared';
 
 import { buildServerEvent, recordEvent } from '../analytics';
 import { Env } from '../env';

@@ -1,5 +1,5 @@
 import { openDB } from 'idb';
-import type { PreferencesV1 } from '@word-of-the-day/shared';
+import type { PreferencesV1 } from '@lexi/shared';
 
 export interface HistoryEntry {
   word_id: number;

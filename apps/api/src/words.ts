@@ -1,7 +1,7 @@
 import { DateTime } from 'luxon';
 
 import { Env } from './env';
-import { getLocalDateKey } from '@word-of-the-day/shared';
+import { getLocalDateKey } from '@lexi/shared';
 
 export interface WordRecord {
   id: number;

@@ -1,6 +1,6 @@
 import { DateTime } from 'luxon';
 
-import { DEFAULT_PREFERENCES, PreferencesV1 } from '@word-of-the-day/shared';
+import { DEFAULT_PREFERENCES, PreferencesV1 } from '@lexi/shared';
 
 import { Env } from './env';
 
