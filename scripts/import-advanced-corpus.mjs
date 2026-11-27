@@ -17,7 +17,8 @@ Usage: node scripts/import-advanced-corpus.mjs [wordlist.txt] [options]
 
 Options:
   --local   Import to local D1 database (default)
-  --remote  Import to remote D1 database
+  --remote  Import to remote D1 database (dev unless --env production)
+  --env     Wrangler environment, e.g. --env production
   --dry-run Show what would be imported without executing
 
 Examples:
@@ -71,9 +72,13 @@ async function main() {
   let filePath = DEFAULT_CORPUS;
   let isRemote = false;
   let isDryRun = false;
+  let envName = null;
 
-  for (const arg of args) {
-    if (arg === '--local') {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--env') {
+      envName = args[++i];
+    } else if (arg === '--local') {
       isRemote = false;
     } else if (arg === '--remote') {
       isRemote = true;
@@ -100,7 +105,7 @@ async function main() {
     return;
   }
 
-  const envFlag = isRemote ? '--remote' : '--local';
+  const envFlag = `${isRemote ? '--remote' : '--local'}${envName ? ` --env ${envName}` : ''}`;
   const apiDir = resolveApiDir();
   const now = new Date().toISOString();
 
@@ -120,7 +125,7 @@ FROM word_pool
 WHERE source = '${SOURCE}' AND created_at = '${now}';`;
 
     fs.writeFileSync(tempFile, sql);
-    execSync(`npx wrangler d1 execute word_of_the_day ${envFlag} --file="${tempFile}"`, {
+    execSync(`npx wrangler d1 execute DB ${envFlag} --file="${tempFile}"`, {
       stdio: 'inherit',
     });
     fs.unlinkSync(tempFile);

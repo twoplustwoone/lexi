@@ -34,7 +34,7 @@ apply_migrations() {
     echo ""
     echo -e "${YELLOW}Step 1: Applying migrations...${NC}"
     cd apps/api
-    npx wrangler d1 migrations apply word_of_the_day --local
+    npx wrangler d1 migrations apply DB --local
     cd ../..
     echo -e "${GREEN}✓ Migrations applied${NC}"
 }
@@ -46,19 +46,19 @@ verify_schema() {
     cd apps/api
 
     echo "  Checking word_pool table..."
-    npx wrangler d1 execute word_of_the_day --local --command "SELECT COUNT(*) as count FROM word_pool;" 2>/dev/null | grep -q "count" && echo -e "  ${GREEN}✓ word_pool exists${NC}" || echo -e "  ${RED}✗ word_pool missing${NC}"
+    npx wrangler d1 execute DB --local --command "SELECT COUNT(*) as count FROM word_pool;" 2>/dev/null | grep -q "count" && echo -e "  ${GREEN}✓ word_pool exists${NC}" || echo -e "  ${RED}✗ word_pool missing${NC}"
 
     echo "  Checking daily_words table..."
-    npx wrangler d1 execute word_of_the_day --local --command "SELECT COUNT(*) as count FROM daily_words;" 2>/dev/null | grep -q "count" && echo -e "  ${GREEN}✓ daily_words exists${NC}" || echo -e "  ${RED}✗ daily_words missing${NC}"
+    npx wrangler d1 execute DB --local --command "SELECT COUNT(*) as count FROM daily_words;" 2>/dev/null | grep -q "count" && echo -e "  ${GREEN}✓ daily_words exists${NC}" || echo -e "  ${RED}✗ daily_words missing${NC}"
 
     echo "  Checking word_details table..."
-    npx wrangler d1 execute word_of_the_day --local --command "SELECT COUNT(*) as count FROM word_details;" 2>/dev/null | grep -q "count" && echo -e "  ${GREEN}✓ word_details exists${NC}" || echo -e "  ${RED}✗ word_details missing${NC}"
+    npx wrangler d1 execute DB --local --command "SELECT COUNT(*) as count FROM word_details;" 2>/dev/null | grep -q "count" && echo -e "  ${GREEN}✓ word_details exists${NC}" || echo -e "  ${RED}✗ word_details missing${NC}"
 
     echo "  Checking word_usage_log table..."
-    npx wrangler d1 execute word_of_the_day --local --command "SELECT COUNT(*) as count FROM word_usage_log;" 2>/dev/null | grep -q "count" && echo -e "  ${GREEN}✓ word_usage_log exists${NC}" || echo -e "  ${RED}✗ word_usage_log missing${NC}"
+    npx wrangler d1 execute DB --local --command "SELECT COUNT(*) as count FROM word_usage_log;" 2>/dev/null | grep -q "count" && echo -e "  ${GREEN}✓ word_usage_log exists${NC}" || echo -e "  ${RED}✗ word_usage_log missing${NC}"
 
     echo "  Checking word_cycle_state table..."
-    npx wrangler d1 execute word_of_the_day --local --command "SELECT current_cycle FROM word_cycle_state WHERE id = 1;" 2>/dev/null | grep -q "current_cycle" && echo -e "  ${GREEN}✓ word_cycle_state exists${NC}" || echo -e "  ${RED}✗ word_cycle_state missing${NC}"
+    npx wrangler d1 execute DB --local --command "SELECT current_cycle FROM word_cycle_state WHERE id = 1;" 2>/dev/null | grep -q "current_cycle" && echo -e "  ${GREEN}✓ word_cycle_state exists${NC}" || echo -e "  ${RED}✗ word_cycle_state missing${NC}"
 
     cd ../..
 }
@@ -69,15 +69,15 @@ check_migrated_words() {
     echo -e "${YELLOW}Step 3: Checking migrated words...${NC}"
     cd apps/api
 
-    WORD_COUNT=$(npx wrangler d1 execute word_of_the_day --local --command "SELECT COUNT(*) as count FROM word_pool;" 2>/dev/null | grep -oP '\d+' | head -1)
+    WORD_COUNT=$(npx wrangler d1 execute DB --local --command "SELECT COUNT(*) as count FROM word_pool;" 2>/dev/null | grep -oP '\d+' | head -1)
     echo -e "  Word pool count: ${GREEN}$WORD_COUNT${NC}"
 
-    READY_COUNT=$(npx wrangler d1 execute word_of_the_day --local --command "SELECT COUNT(*) as count FROM word_details WHERE status = 'ready';" 2>/dev/null | grep -oP '\d+' | head -1)
+    READY_COUNT=$(npx wrangler d1 execute DB --local --command "SELECT COUNT(*) as count FROM word_details WHERE status = 'ready';" 2>/dev/null | grep -oP '\d+' | head -1)
     echo -e "  Words with ready status: ${GREEN}$READY_COUNT${NC}"
 
     echo ""
     echo "  Sample words in pool:"
-    npx wrangler d1 execute word_of_the_day --local --command "SELECT id, word, enabled, source FROM word_pool LIMIT 5;" 2>/dev/null
+    npx wrangler d1 execute DB --local --command "SELECT id, word, enabled, source FROM word_pool LIMIT 5;" 2>/dev/null
 
     cd ../..
 }
@@ -191,19 +191,19 @@ show_db_commands() {
     echo -e "${BLUE}========================================${NC}"
     echo ""
     echo "# View word pool:"
-    echo "cd apps/api && npx wrangler d1 execute word_of_the_day --local --command \"SELECT * FROM word_pool LIMIT 10;\""
+    echo "cd apps/api && npx wrangler d1 execute DB --local --command \"SELECT * FROM word_pool LIMIT 10;\""
     echo ""
     echo "# View daily words:"
-    echo "cd apps/api && npx wrangler d1 execute word_of_the_day --local --command \"SELECT * FROM daily_words ORDER BY day DESC LIMIT 5;\""
+    echo "cd apps/api && npx wrangler d1 execute DB --local --command \"SELECT * FROM daily_words ORDER BY day DESC LIMIT 5;\""
     echo ""
     echo "# View enrichment status:"
-    echo "cd apps/api && npx wrangler d1 execute word_of_the_day --local --command \"SELECT wp.word, wd.status, wd.retry_count FROM word_pool wp JOIN word_details wd ON wp.id = wd.word_pool_id LIMIT 10;\""
+    echo "cd apps/api && npx wrangler d1 execute DB --local --command \"SELECT wp.word, wd.status, wd.retry_count FROM word_pool wp JOIN word_details wd ON wp.id = wd.word_pool_id LIMIT 10;\""
     echo ""
     echo "# View current cycle:"
-    echo "cd apps/api && npx wrangler d1 execute word_of_the_day --local --command \"SELECT * FROM word_cycle_state;\""
+    echo "cd apps/api && npx wrangler d1 execute DB --local --command \"SELECT * FROM word_cycle_state;\""
     echo ""
     echo "# View word usage log:"
-    echo "cd apps/api && npx wrangler d1 execute word_of_the_day --local --command \"SELECT * FROM word_usage_log ORDER BY id DESC LIMIT 10;\""
+    echo "cd apps/api && npx wrangler d1 execute DB --local --command \"SELECT * FROM word_usage_log ORDER BY id DESC LIMIT 10;\""
 }
 
 # Main execution

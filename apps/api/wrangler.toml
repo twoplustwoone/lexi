@@ -18,13 +18,13 @@ crons = ["*/30 * * * *"]
 
 [[d1_databases]]
 binding = "DB"
-database_name = "word_of_the_day"
-database_id = "64dfba7a-5c38-4dcb-b111-ebe6f89f4d33"
+database_name = "word_of_the_day_dev"
+database_id = "af249921-c580-4463-952a-a201a61401bf"
 migrations_dir = "migrations"
 
 [[kv_namespaces]]
 binding = "KV"
-id = "09c68a2322be4cab9ef0dc751895ab7f"
+id = "c7886c4b50c145598eb24253243466b3"
 
 # =============================================================================
 # Production Environment
