@@ -135,7 +135,7 @@ WHERE EXISTS (SELECT 1 FROM users WHERE id = '${userId}')
   AND NOT EXISTS (SELECT 1 FROM auth_email_password WHERE email = '${usernameEscaped}');
 `;
 
-const tempPath = path.join(os.tmpdir(), `wotd-admin-seed-${Date.now()}.sql`);
+const tempPath = path.join(os.tmpdir(), `lexi-admin-seed-${Date.now()}.sql`);
 writeFileSync(tempPath, sql);
 
 const wrangler = getWranglerCommand();

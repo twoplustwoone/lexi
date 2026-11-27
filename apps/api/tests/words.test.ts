@@ -1,7 +1,7 @@
 import { DateTime } from 'luxon';
 import { describe, expect, it } from 'vitest';
 
-import { DEFAULT_PREFERENCES } from '@word-of-the-day/shared';
+import { DEFAULT_PREFERENCES } from '@lexi/shared';
 
 import type { Env } from '../src/env';
 import { ensureDailyWordForUser } from '../src/words';

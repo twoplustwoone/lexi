@@ -1,4 +1,4 @@
-import type { WordCard } from '@word-of-the-day/shared';
+import type { WordCard } from '@lexi/shared';
 import { DateTime } from 'luxon';
 import { describe, expect, it } from 'vitest';
 

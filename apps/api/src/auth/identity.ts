@@ -1,4 +1,4 @@
-import { DEFAULT_PREFERENCES, normalizePreferences, timeZoneSchema } from '@word-of-the-day/shared';
+import { DEFAULT_PREFERENCES, normalizePreferences, timeZoneSchema } from '@lexi/shared';
 
 import { Env } from '../env';
 import { createAnonymousUser, getUserById } from '../db';

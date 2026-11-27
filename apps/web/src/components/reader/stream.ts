@@ -1,4 +1,4 @@
-import type { WordCard, WordDetailsStatus } from '@word-of-the-day/shared';
+import type { WordCard, WordDetailsStatus } from '@lexi/shared';
 
 import type { HistoryEntry } from '../../storage';
 import type { WordEntryData } from './WordEntry';

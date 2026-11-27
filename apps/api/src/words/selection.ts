@@ -1,5 +1,5 @@
 import { DateTime } from 'luxon';
-import type { WordDifficulty, WordSelectionFallbackReason } from '@word-of-the-day/shared';
+import type { WordDifficulty, WordSelectionFallbackReason } from '@lexi/shared';
 import type { Env } from '../env';
 
 const MAX_INT = 2147483647;

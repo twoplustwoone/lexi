@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
-import type { WordDifficulty } from '@word-of-the-day/shared';
+import type { WordDifficulty } from '@lexi/shared';
 
 import {
   hashDateToSeed,

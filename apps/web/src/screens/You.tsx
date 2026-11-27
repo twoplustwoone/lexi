@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { ChevronRight } from 'lucide-react';
 import { route } from 'preact-router';
-import type { WordDifficulty } from '@word-of-the-day/shared';
+import type { WordDifficulty } from '@lexi/shared';
 
 import { logout, resetAnonymousIdentity } from '../api';
 import { Button } from '../components/Button';

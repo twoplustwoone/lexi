@@ -1,5 +1,5 @@
 {
-  "name": "@word-of-the-day/api",
+  "name": "@lexi/api",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -17,7 +17,7 @@
   "dependencies": {
     "@noble/curves": "^1.4.0",
     "@noble/hashes": "^1.4.0",
-    "@word-of-the-day/shared": "file:../../packages/shared",
+    "@lexi/shared": "file:../../packages/shared",
     "hono": "^4.5.2",
     "luxon": "^3.5.0",
     "zod": "^3.23.8"

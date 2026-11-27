@@ -1,4 +1,4 @@
-name = "word-of-the-day-api"
+name = "lexi-api"
 main = "src/index.ts"
 compatibility_date = "2024-07-25"
 compatibility_flags = ["nodejs_compat"]
@@ -21,8 +21,8 @@ crons = ["*/30 * * * *"]
 
 [[d1_databases]]
 binding = "DB"
-database_name = "word_of_the_day_dev"
-database_id = "af249921-c580-4463-952a-a201a61401bf"
+database_name = "lexi_dev"
+database_id = "ea59649d-56e5-4e60-87bf-57e435ff2a5f"
 migrations_dir = "migrations"
 
 [[kv_namespaces]]
@@ -34,6 +34,11 @@ id = "c7886c4b50c145598eb24253243466b3"
 # =============================================================================
 # Deploy with: wrangler deploy --env production
 # Set secrets with: wrangler secret put <NAME> --env production
+
+[env.production]
+# The live worker kept its pre-rename name. Renaming it would deploy a new
+# worker without the old one's secrets or custom domain.
+name = "word-of-the-day-api-production"
 
 [env.production.vars]
 APP_ENV = "production"

@@ -1,5 +1,5 @@
 import { DateTime } from 'luxon';
-import type { WordCard } from '@word-of-the-day/shared';
+import type { WordCard } from '@lexi/shared';
 import type { Env } from '../env';
 import { evaluateWordCardQuality } from './quality';
 

@@ -32,7 +32,7 @@ The app works without accounts by default, supports optional account creation la
    - `cp apps/web/.env.example apps/web/.env`
 3. Review required environment variables in `docs/ENVIRONMENT.md`
 4. Generate VAPID keys: `npm run generate:vapid`
-5. D1 and KV are already configured in `apps/api/wrangler.toml`. The default environment uses `word_of_the_day_dev` and a dev KV namespace. `--env production` uses the production database and KV. Plain `wrangler dev` and `--local` commands use local state in `apps/api/.wrangler`, and never touch either remote database.
+5. D1 and KV are already configured in `apps/api/wrangler.toml`. The default environment uses `lexi_dev` and a dev KV namespace. `--env production` uses the production database and KV. Plain `wrangler dev` and `--local` commands use local state in `apps/api/.wrangler`, and never touch either remote database.
 6. Apply migrations (includes seeded words): `npm run db:migrate --prefix apps/api`
 7. (Optional) Seed words + admin: `npm run seed:words`
 

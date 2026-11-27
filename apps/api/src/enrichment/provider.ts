@@ -1,4 +1,4 @@
-import type { WordCard } from '@word-of-the-day/shared';
+import type { WordCard } from '@lexi/shared';
 
 /**
  * Result from an enrichment provider

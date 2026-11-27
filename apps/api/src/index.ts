@@ -17,7 +17,7 @@ import {
   wordDifficultySchema,
   wordCardSchema,
   wordReviewStatusSchema,
-} from '@word-of-the-day/shared';
+} from '@lexi/shared';
 
 import { buildServerEvent, recordEvent } from './analytics';
 import { sendEmailCode } from './auth/email';
@@ -376,7 +376,7 @@ app.get('/api/word/today', async (c) => {
     return c.json({ error: 'User not found' }, 404);
   }
 
-  const { getLocalDateKey } = await import('@word-of-the-day/shared');
+  const { getLocalDateKey } = await import('@lexi/shared');
   const dateKey = getLocalDateKey(new Date(), user.timezone);
 
   const preferences = normalizePreferences(

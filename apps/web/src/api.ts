@@ -6,7 +6,7 @@ import {
   type WordDifficulty,
   type WordReviewStatus,
   type WordSelectionFallbackReason,
-} from '@word-of-the-day/shared';
+} from '@lexi/shared';
 
 import {
   HistoryEntry,
@@ -706,7 +706,7 @@ export type {
   WordDifficulty,
   WordPoolEntry,
   WordReviewStatus,
-} from '@word-of-the-day/shared';
+} from '@lexi/shared';
 
 export interface WordPoolResponse {
   words: WordPoolEntry[];

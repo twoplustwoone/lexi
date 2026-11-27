@@ -1,4 +1,4 @@
-import { SessionObservation, isUnwantedSessionLoss } from '@word-of-the-day/shared';
+import { SessionObservation, isUnwantedSessionLoss } from '@lexi/shared';
 
 import { Env } from '../env';
 import { logInfo, logWarn } from '../notifications/logger';
