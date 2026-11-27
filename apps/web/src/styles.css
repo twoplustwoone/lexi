@@ -2,23 +2,93 @@
 @source "../index.html";
 @source "./**/*.{ts,tsx}";
 
+/**
+ * Self-hosted rather than fetched from Google Fonts.
+ *
+ * The hosted stylesheet is a render-blocking request to a third party, and the
+ * font files are only discovered once it returns — so the browser paints in
+ * Georgia and swaps a whole screen of type afterwards. Served from our own
+ * origin these preload alongside the page, and the swap window closes before
+ * anything is painted. Latin subsets only; the whole set is ~104KB.
+ */
+@font-face {
+  font-family: 'Cormorant Garamond';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/cormorant-garamond-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Lora';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/lora-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Lora';
+  font-style: italic;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/lora-italic-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/**
+ * Classical — the design system the whole app is built on.
+ *
+ * Three rules do most of the work. Colour is stroke: gold appears as a rule, a
+ * ring, an underline or a numeral, never as a fill behind small text. Muted
+ * text is ink mixed down (68/62/55/52/48/45%), not a separate colour. And
+ * nothing is bold — the bigger the type, the lighter it sets.
+ */
 @theme {
-  --font-sans: 'Sora', system-ui, sans-serif;
-  --font-display: 'Fraunces', serif;
-  --color-ink: #1e1b16;
-  --color-muted: #6f6457;
-  --color-accent: #2f5d50;
-  --color-accent-strong: #1b4332;
-  --color-card: #fffaf2;
-  --color-banner: #efe1cd;
-  --color-sand: #f7f0e6;
-  --color-sand-accent: #f1dfcc;
+  --font-sans: 'Lora', Georgia, serif;
+  --font-display: 'Cormorant Garamond', Georgia, serif;
+
+  --color-bg: #f3f2f2;
+  --color-surface: #eae9e9;
+  --color-ink: #201f1d;
+  --color-accent: #b68235;
+  --color-accent-strong: #7d5411;
+  --color-neutral-100: #f8f4f4;
+  --color-neutral-400: #bab6b6;
+  --color-neutral-900: #2d2b2b;
+
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 7px;
+
+  --shadow-lg: 0 12px 32px color-mix(in srgb, #2d2b2b 22%, transparent);
 }
 
 @layer base {
   body {
     color-scheme: light;
-    @apply m-0 min-h-screen bg-sand font-sans text-ink leading-relaxed;
+    @apply m-0 min-h-screen bg-bg font-sans text-ink;
+    line-height: 1.55;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-display);
+    font-weight: 400;
+  }
+
+  /* Every interactive element takes the accent outline, never the browser
+     default. */
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-accent;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--color-accent) 30%, transparent);
   }
 }
 
@@ -29,6 +99,17 @@
   }
   .no-scrollbar::-webkit-scrollbar {
     display: none;
+  }
+  /* Figures set tabular wherever they stand as data — dates, counts, times,
+     stats. Running prose keeps Lora's text figures. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+  /* Definitions justify and hyphenate; the measure is narrow enough that
+     ragged-right leaves holes. */
+  .prose-justify {
+    text-align: justify;
+    hyphens: auto;
   }
 }
 

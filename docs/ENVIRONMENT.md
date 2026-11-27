@@ -15,7 +15,7 @@ Required config
 
 - `APP_ENV`: `development` or `production`.
 - `CORS_ALLOW_ORIGIN`: Comma-separated list of allowed origins.
-- `SESSION_TTL_DAYS`: Number of days to keep session tokens.
+- `SESSION_TTL_DAYS`: Number of days to keep session tokens. The session cookie is deliberately given a longer `Max-Age` than this (plus a two-week evidence window) so that an expired session can still be recognised as expired rather than arriving as an empty request; the token grants nothing past its expiry either way. Expired rows are swept on the cron.
 - `SESSION_COOKIE_SAMESITE`: Cookie SameSite policy (`Lax`, `Strict`, `None`).
 - `COOKIE_SECURE`: `true` in production, `false` in local dev.
 - `VAPID_SUBJECT`: Contact URI, e.g. `mailto:hello@example.com`.

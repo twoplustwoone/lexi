@@ -1,6 +1,7 @@
 import {
   eventSchema,
   type WordCard,
+  type WordPoolEntry,
   type WordDetailsStatus,
   type WordDifficulty,
   type WordReviewStatus,
@@ -16,7 +17,14 @@ import {
   saveHistory,
   saveSettings,
 } from './storage';
-import { getAnonymousId, getTimeZone, setAnonymousId } from './identity';
+import {
+  getAnonymousId,
+  getDisplayMode,
+  getSessionExpectation,
+  getTimeZone,
+  setAnonymousId,
+  setSessionExpectation,
+} from './identity';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
 
@@ -71,6 +79,11 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
   const headers = new Headers(options.headers || {});
   headers.set('Content-Type', 'application/json');
   headers.set('X-Timezone', getTimeZone());
+  // Diagnostics for unwanted sign-outs. The server cannot see whether this
+  // device thought it was signed in, or whether it is running installed, and
+  // both are needed to tell a dropped cookie from cleared storage.
+  headers.set('X-Client-Session', getSessionExpectation());
+  headers.set('X-Client-Display', getDisplayMode());
 
   const response = await fetch(`${API_BASE}${path}`, {
     ...options,
@@ -146,11 +159,44 @@ export async function fetchMe(): Promise<{
   is_anonymous: boolean;
   is_admin: boolean;
 }> {
-  return apiFetch('/me');
+  const me = await apiFetch<{
+    user_id: string | null;
+    is_authenticated: boolean;
+    is_anonymous: boolean;
+    is_admin: boolean;
+  }>('/me');
+  // Kept in step with the server on every ask, in both directions.
+  //
+  // Setting it here as well as at sign-in means a device that was already
+  // signed in before this shipped still gets flagged, so its next sign-out is
+  // legible. Clearing it is what makes a loss count once: the flag says "I
+  // believe I have a session", and the server has just said otherwise, so
+  // every later app open would otherwise report the same loss again — enough
+  // repeats from one reader to outweigh everyone else and pick the verdict.
+  setSessionExpectation(me.is_authenticated);
+  return me;
 }
 
 export async function fetchTodayWord(): Promise<DailyWordPayload> {
   return apiFetch<DailyWordPayload>('/word/today');
+}
+
+/**
+ * Today's word, registering an anonymous identity only if the request is
+ * actually rejected.
+ *
+ * Registration used to run first, unconditionally, which cost every returning
+ * reader a full round-trip before the word was even requested — they already
+ * hold the cookie that identifies them. Only a genuinely first-ever visit
+ * needs the handshake, so pay for it only when the server says so.
+ */
+export async function fetchTodayWordWithIdentity(): Promise<DailyWordPayload> {
+  try {
+    return await fetchTodayWord();
+  } catch {
+    await registerAnonymousIdentity();
+    return fetchTodayWord();
+  }
 }
 
 export async function fetchHistory(): Promise<HistoryEntry[]> {
@@ -258,6 +304,7 @@ export function getClientType(): 'web' | 'pwa' {
 
 export async function signUpEmailPassword(email: string, password: string): Promise<void> {
   await apiFetch('/auth/signup', { method: 'POST', body: JSON.stringify({ email, password }) });
+  setSessionExpectation(true);
 }
 
 export async function loginEmailPassword(identifier: string, password: string): Promise<void> {
@@ -265,6 +312,7 @@ export async function loginEmailPassword(identifier: string, password: string): 
     method: 'POST',
     body: JSON.stringify({ identifier, password }),
   });
+  setSessionExpectation(true);
 }
 
 export async function getAuthMethods(email: string): Promise<AuthMethodsResponse> {
@@ -283,14 +331,18 @@ export async function verifyEmailCode(email: string, code: string): Promise<void
     method: 'POST',
     body: JSON.stringify({ email, code }),
   });
+  setSessionExpectation(true);
 }
 
 export async function loginWithGoogle(idToken: string): Promise<void> {
   await apiFetch('/auth/google', { method: 'POST', body: JSON.stringify({ id_token: idToken }) });
+  setSessionExpectation(true);
 }
 
 export async function logout(): Promise<void> {
   await apiFetch('/auth/logout', { method: 'POST' });
+  // Cleared last: from here on, a missing session is expected rather than a fault.
+  setSessionExpectation(false);
 }
 
 export interface AdminNotifyResult {
@@ -339,6 +391,8 @@ export interface AdminUser {
   isAnonymous: boolean;
   isAdmin: boolean;
   createdAt: string;
+  /** Most recent user_words.viewed_at, or null if they have never opened one. */
+  lastReadAt: string | null;
   authProviders: AdminAuthProvider[];
 }
 
@@ -427,6 +481,111 @@ export async function fetchAdminTimelineStats(period: string = '7d'): Promise<Ad
 
 export async function fetchAdminEventStats(period: string = '7d'): Promise<AdminEventStats> {
   return apiFetch<AdminEventStats>(`/admin/stats/activity?period=${period}`);
+}
+
+export type AdminLogLevel = 'info' | 'warn' | 'error';
+export type AdminLogCategory = 'cron' | 'push' | 'subscription' | 'vapid' | 'rate_limit' | 'auth';
+
+export interface AdminLogEntry {
+  id: string;
+  timestamp: string;
+  level: AdminLogLevel;
+  category: AdminLogCategory;
+  user_id: string | null;
+  message: string;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
+}
+
+/**
+ * Delivery and subscription outcomes. Overview's "did anything break?" reads
+ * the error and warn rows; the info rows are the routine count.
+ */
+export async function fetchAdminLogs(
+  options: {
+    level?: AdminLogLevel;
+    category?: AdminLogCategory;
+    limit?: number;
+    offset?: number;
+  } = {}
+): Promise<{ logs: AdminLogEntry[] }> {
+  const params = new URLSearchParams();
+  if (options.level) params.set('level', options.level);
+  if (options.category) params.set('category', options.category);
+  if (options.limit) params.set('limit', String(options.limit));
+  if (options.offset) params.set('offset', String(options.offset));
+  const query = params.toString();
+  return apiFetch<{ logs: AdminLogEntry[] }>(`/admin/logs${query ? `?${query}` : ''}`);
+}
+
+export interface SessionLossRecord {
+  id: string;
+  timestamp: string;
+  user_id: string | null;
+  metadata: Record<string, unknown> | null;
+}
+
+export interface QuietSessionRecord {
+  sessionId: string;
+  userId: string;
+  lastSeenAt: string;
+  expiresAt: string;
+  daysLeftWhenLastSeen: number;
+}
+
+export interface SessionDiagnosticsResponse {
+  since: string;
+  days: number;
+  quietDays: number;
+  losses: SessionLossRecord[];
+  quiet: QuietSessionRecord[];
+}
+
+/**
+ * The Sessions screen's whole payload, summarised by the API.
+ *
+ * Deliberately not assembled from `fetchAdminLogs` here: aggregating in the
+ * browser meant paging thousands of routine rows onto a phone, and a row cap
+ * between the screen and the window it claims to show is a cap that silently
+ * drops the losses being looked for.
+ */
+export async function fetchSessionDiagnostics(days: number): Promise<SessionDiagnosticsResponse> {
+  return apiFetch<SessionDiagnosticsResponse>(`/admin/session-diagnostics?days=${days}`);
+}
+
+const LOG_PAGE_SIZE = 500;
+/** Ten pages is far more than a week of logs at this scale, and bounds a runaway. */
+const LOG_PAGE_LIMIT = 10;
+
+/**
+ * Every log back to `sinceIso`, not just the newest page.
+ *
+ * Overview asks whether anything broke in the last seven days. A single capped
+ * request cannot answer that: a failure early in the window is displaced by
+ * newer routine rows, and the figure would report all-clear over a real
+ * failure. Logs come back newest-first, so page until one falls outside the
+ * window.
+ */
+export async function fetchAdminLogsSince(
+  sinceIso: string,
+  options: { level?: AdminLogLevel; category?: AdminLogCategory } = {}
+): Promise<AdminLogEntry[]> {
+  const collected: AdminLogEntry[] = [];
+  for (let page = 0; page < LOG_PAGE_LIMIT; page += 1) {
+    const { logs } = await fetchAdminLogs({
+      ...options,
+      limit: LOG_PAGE_SIZE,
+      offset: page * LOG_PAGE_SIZE,
+    });
+    if (logs.length === 0) break;
+
+    const inWindow = logs.filter((entry) => entry.timestamp >= sinceIso);
+    collected.push(...inWindow);
+
+    // The page ran past the cutoff, or the table is exhausted.
+    if (inWindow.length < logs.length || logs.length < LOG_PAGE_SIZE) break;
+  }
+  return collected;
 }
 
 // Admin Word Management Types
@@ -541,6 +700,72 @@ export async function fetchWordPoolHealth(): Promise<WordPoolHealth> {
   return apiFetch<WordPoolHealth>('/admin/word-pool/health');
 }
 
+export type {
+  WordCard,
+  WordDetailsStatus,
+  WordDifficulty,
+  WordPoolEntry,
+  WordReviewStatus,
+} from '@word-of-the-day/shared';
+
+export interface WordPoolResponse {
+  words: WordPoolEntry[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface WordPoolImportResult {
+  created: number;
+  skipped: number;
+  /** Survived the endpoint's `^[a-z]{4,12}$` filter. */
+  filtered: number;
+  originalCount: number;
+}
+
+/**
+ * Add words to the pool selection actually draws from.
+ *
+ * The legacy `/admin/words` endpoint writes the separate `words` table, which
+ * neither this screen nor daily delivery reads — a word added there looks
+ * saved and never arrives. Enrichment fills in the card afterwards, so this
+ * takes bare words rather than definitions.
+ */
+export async function importWordPool(
+  words: string[],
+  options: { source?: string; difficultyCategory?: WordDifficulty } = {}
+): Promise<WordPoolImportResult> {
+  return apiFetch<WordPoolImportResult>('/admin/word-pool/import', {
+    method: 'POST',
+    body: JSON.stringify({
+      words,
+      source: options.source ?? 'admin',
+      ...(options.difficultyCategory ? { difficultyCategory: options.difficultyCategory } : {}),
+    }),
+  });
+}
+
+export async function fetchWordPool(
+  options: {
+    limit?: number;
+    offset?: number;
+    search?: string;
+    difficultyCategory?: WordDifficulty;
+    status?: WordDetailsStatus;
+    enabled?: boolean;
+  } = {}
+): Promise<WordPoolResponse> {
+  const params = new URLSearchParams();
+  if (options.limit) params.set('limit', String(options.limit));
+  if (options.offset) params.set('offset', String(options.offset));
+  if (options.search) params.set('search', options.search);
+  if (options.difficultyCategory) params.set('difficultyCategory', options.difficultyCategory);
+  if (options.status) params.set('status', options.status);
+  if (options.enabled !== undefined) params.set('enabled', String(options.enabled));
+  const query = params.toString();
+  return apiFetch<WordPoolResponse>(`/admin/word-pool${query ? `?${query}` : ''}`);
+}
+
 export interface WordReviewQueueItem {
   id: number;
   word: string;
@@ -606,4 +831,24 @@ export async function rejectWordPoolReview(
 
 export async function retryWordPoolReview(id: number): Promise<{ ok: boolean }> {
   return apiFetch(`/admin/word/${id}/retry`, { method: 'POST' });
+}
+
+export async function bulkReviewWordPool(payload: {
+  wordPoolIds: number[];
+  action: 'approve' | 'reject';
+  reviewNote?: string;
+}): Promise<{ ok: boolean; reviewStatus: WordReviewStatus; updated: number; requested: number }> {
+  return apiFetch('/admin/word-pool/review/bulk', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function autoApproveWordPoolQueue(
+  limit?: number
+): Promise<{ ok: boolean; scanned: number; approved: number; flagged: number }> {
+  return apiFetch('/admin/word-pool/review/auto-approve', {
+    method: 'POST',
+    body: JSON.stringify(limit ? { limit } : {}),
+  });
 }

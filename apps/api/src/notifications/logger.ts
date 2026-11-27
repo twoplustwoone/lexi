@@ -3,7 +3,7 @@ import { DateTime } from 'luxon';
 import { Env } from '../env';
 
 export type LogLevel = 'info' | 'warn' | 'error';
-export type LogCategory = 'cron' | 'push' | 'subscription' | 'vapid' | 'rate_limit';
+export type LogCategory = 'cron' | 'push' | 'subscription' | 'vapid' | 'rate_limit' | 'auth';
 
 export interface LogEntry {
   level: LogLevel;
@@ -98,16 +98,35 @@ export function logError(
   return log(env, { level: 'error', category, message, metadata, userId });
 }
 
+/**
+ * Drop `auth` records past their useful life.
+ *
+ * Only that category: it is the one this table gained for diagnosing
+ * sign-outs, and it is written on every app open, so it is the only one whose
+ * growth is unbounded. Nothing else in here is this sweep's to delete.
+ */
+export async function purgeExpiredAuthLogs(env: Env, retentionDays = 30): Promise<number> {
+  const cutoff = DateTime.utc().minus({ days: retentionDays }).toISO();
+  const result = await env.DB.prepare(
+    "DELETE FROM notification_logs WHERE category = 'auth' AND timestamp <= ?"
+  )
+    .bind(cutoff)
+    .run();
+  return result.meta?.changes ?? 0;
+}
+
 export interface LogQueryParams {
   category?: LogCategory;
   level?: LogLevel;
   userId?: string;
+  /** ISO timestamp; only records at or after it are returned. */
+  since?: string;
   limit?: number;
   offset?: number;
 }
 
 export async function queryLogs(env: Env, params: LogQueryParams = {}): Promise<StoredLogEntry[]> {
-  const { category, level, userId, limit = 100, offset = 0 } = params;
+  const { category, level, userId, since, limit = 100, offset = 0 } = params;
 
   const conditions: string[] = [];
   const bindings: (string | number)[] = [];
@@ -124,12 +143,25 @@ export async function queryLogs(env: Env, params: LogQueryParams = {}): Promise<
     conditions.push('user_id = ?');
     bindings.push(userId);
   }
+  if (since) {
+    conditions.push('timestamp >= ?');
+    bindings.push(since);
+  }
 
   let query = 'SELECT * FROM notification_logs';
   if (conditions.length > 0) {
     query += ' WHERE ' + conditions.join(' AND ');
   }
-  query += ' ORDER BY timestamp DESC LIMIT ? OFFSET ?';
+  // `timestamp` is an ISO string at millisecond resolution, so rows written
+  // inside the same millisecond compare equal and the sort is not total.
+  // SQLite may then return them in either order — which quietly inverted "most
+  // recent first" for ties, and, because this pages with LIMIT/OFFSET, let a
+  // page boundary landing inside a tie repeat one row and drop another.
+  //
+  // `rowid` is SQLite's implicit insertion counter on a table like this one.
+  // It breaks the tie in the order the rows were actually written, and makes
+  // the ordering total, so paging is stable.
+  query += ' ORDER BY timestamp DESC, rowid DESC LIMIT ? OFFSET ?';
   bindings.push(Math.min(limit, 500), offset);
 
   const result = await env.DB.prepare(query)

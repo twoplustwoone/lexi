@@ -1,0 +1,96 @@
+name: Dependency Drift
+
+# CI installs from the committed lockfile, so upstream releases can no longer
+# break the build without someone choosing to update it. That safety has a cost:
+# drift now accumulates silently until the next dependency change. This job is
+# the early warning — once a week it throws the lockfile away, resolves every
+# range fresh, and runs the full suite against whatever npm picks today.
+#
+# A failure here does not mean anything is broken right now. It means updating
+# dependencies would break something, and that work is waiting.
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Resolve dependencies fresh
+        run: |
+          rm -f package-lock.json
+          npm install
+
+      - name: Report resolved versions
+        run: npm ls --depth=0 || true
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm run test
+
+      - name: Build
+        run: npm run build
+
+      - name: Open an issue when drift breaks the build
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          existing=$(gh issue list --label dependency-drift --state open --limit 1 --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "Still failing as of $(date -u +%Y-%m-%d). Run: ${RUN_URL}"
+            exit 0
+          fi
+
+          cat > /tmp/drift-issue.md <<'BODY'
+          The weekly drift check resolved every dependency range fresh and the build failed.
+
+          Nothing is broken on `main` right now — CI installs from the lockfile, so the
+          committed versions still work. What this means is that the next person to update
+          dependencies will hit this.
+
+          To reproduce locally:
+
+              rm -f package-lock.json
+              npm install
+              npm run validate
+
+          The Cloudflare toolchain (`wrangler`, `@cloudflare/workers-types`, `miniflare`) is
+          pinned exactly in `apps/api/package.json` because it has broken this build before.
+          Moving `@cloudflare/workers-types` to v5 is a migration rather than a bump: v5 drops
+          the dated type entrypoints, so the `types` entry in `apps/api/tsconfig.json` has to
+          change in the same commit.
+          BODY
+
+          printf '\nRun: %s\n' "${RUN_URL}" >> /tmp/drift-issue.md
+
+          gh label create dependency-drift \
+            --description "Dependencies can no longer be updated cleanly" \
+            --color D93F0B --force || true
+
+          gh issue create \
+            --title "Dependency drift: updating dependencies would break the build" \
+            --label dependency-drift \
+            --body-file /tmp/drift-issue.md

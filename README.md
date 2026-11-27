@@ -26,7 +26,7 @@ The app works without accounts by default, supports optional account creation la
 
 ### Setup
 
-1. Install dependencies: `npm run install:all`
+1. Install dependencies: `npm ci` (or `npm run install:all` when you intend to update the lockfile)
 2. Copy environment templates:
    - `cp apps/api/.dev.vars.example apps/api/.dev.vars`
    - `cp apps/web/.env.example apps/web/.env`
@@ -35,6 +35,50 @@ The app works without accounts by default, supports optional account creation la
 5. D1 and KV are already configured in `apps/api/wrangler.toml`. The default environment uses `word_of_the_day_dev` and a dev KV namespace. `--env production` uses the production database and KV. Plain `wrangler dev` and `--local` commands use local state in `apps/api/.wrangler`, and never touch either remote database.
 6. Apply migrations (includes seeded words): `npm run db:migrate --prefix apps/api`
 7. (Optional) Seed words + admin: `npm run seed:words`
+
+### Dependencies
+
+This is an npm workspaces repo with a single `package-lock.json` at the root — do
+not add per-package lockfiles, which is how resolutions drifted apart before.
+
+CI and deploys install with `npm ci`, so the lockfile decides what gets built and
+an upstream release cannot change it. Use `npm install` only when you mean to move
+the lockfile, and commit the result.
+
+The Cloudflare toolchain (`wrangler`, `@cloudflare/workers-types`, `miniflare`) is
+pinned to exact versions because it has broken this build before. Note that
+`@cloudflare/workers-types` v5 drops the dated type entrypoints, so moving to it
+means changing the `types` entry in `apps/api/tsconfig.json` in the same commit —
+a migration, not a bump.
+
+A weekly **Dependency Drift** workflow resolves every range fresh and runs the full
+suite, so you find out that updating would break something before you need to
+update. It opens an issue when it fails.
+
+### Word pool and review
+
+Words flow through the pool in three steps:
+
+1. **Import** raw words (`scripts/import-scowl.mjs`, `scripts/import-advanced-corpus.mjs`),
+   which also queues each new word for enrichment.
+2. **Enrich** them from Merriam-Webster (falling back to dictionaryapi.dev) on the
+   `*/30` cron, up to 10 words per run.
+3. **Approve** them. Only words that are both `ready` and `approved` are ever served.
+
+Approval is automatic by default. Each enriched word is checked by a quality gate
+(`apps/api/src/words/quality.ts`) that rejects empty payloads, stub definitions, and
+entries that only cross-reference another word form ("past tense of ...", "plural of ...").
+Words that pass are approved without human involvement; words that fail stay in the
+review queue with a note explaining why.
+
+The same gate runs on the cron against any backlog, so words enriched before
+auto-approval existed drain on their own. Admins can also:
+
+- select words in the review queue and approve them in bulk, or
+- press **Run auto-approve sweep** to process the backlog on demand.
+
+Set `ENRICHMENT_AUTO_APPROVE = "false"` in `wrangler.toml` to send every enriched
+word through the manual queue instead.
 
 ### Run
 
@@ -55,6 +99,10 @@ Local dev admin seeding uses `ADMIN_USERNAME` and `ADMIN_PASSWORD` from `apps/ap
 - `npm run seed:admin` (local)
 - `npm run seed:admin -- --remote` (remote dev database)
 - `npm run seed:admin -- --remote --env production` (production, used in deploy workflow)
+
+Seeding assumes the schema is already there. Apply migrations first with
+`npm run db:migrate --prefix apps/api`; the deploy workflow applies them in its
+own step before the worker goes out.
 
 If the admin user already exists, the seed script skips creation unless `ADMIN_FORCE_SEED` is set to a truthy value to recreate/update the admin credentials.
 

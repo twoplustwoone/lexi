@@ -14,7 +14,7 @@ function createExecutionContext(): ExecutionContext {
     props: {},
     waitUntil: () => {},
     passThroughOnException: () => {},
-  } as ExecutionContext;
+  } as unknown as ExecutionContext;
 }
 
 function normalizeKeyPart(value: string): string {

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="Lexi">
+<!-- Lexi app mark: the phonetic-respelling slashes around a Fraunces L.
+     The L is Fraunces SemiBold converted to outlines, so rendering never
+     depends on the font being available. Regenerate the PNGs with
+     scripts/generate-icons.mjs after editing this file. -->
+  <rect width="512" height="512" rx="115" ry="115" fill="#f7f0e6"/>
+  <g transform="translate(256 256) scale(1.15) translate(-256 -256)">
+    <line x1="132" y1="364" x2="176" y2="148" stroke="#2f5d50" stroke-width="24" stroke-linecap="round"/>
+    <line x1="336" y1="364" x2="380" y2="148" stroke="#2f5d50" stroke-width="24" stroke-linecap="round"/>
+    <path transform="translate(189.77 324.15) scale(0.1 -0.1)"
+          fill="#1b4332" d="M669 1303L612 1290Q588 1283 575 1269Q562 1255 562 1233L562 171Q562 133 584 116.5Q606 100 651 100L817 100Q874 100 914 115.5Q954 131 986 170Q1018 209 1051 281L1111 419Q1123 444 1140.5 452.5Q1158 461 1181 455Q1205 449 1215 432.5Q1225 416 1217 388L1127 36Q1116 -1 1099.5 -19Q1083 -37 1051 -37Q1030 -37 1009.5 -28Q989 -19 964.5 -9.5Q940 0 903 0L164 0Q133 0 118.5 12.5Q104 25 104 46Q104 84 146 97L203 110Q227 117 240 131Q253 145 253 167L253 1233Q253 1255 240 1269Q227 1283 203 1290L146 1303Q104 1316 104 1354Q104 1376 118.5 1388Q133 1400 164 1400L651 1400Q682 1400 696.5 1388Q711 1376 711 1354Q711 1316 669 1303Z"/>
+  </g>
+</svg>

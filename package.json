@@ -13,7 +13,7 @@
     "lint:fix": "npm run lint:fix --prefix packages/shared && npm run lint:fix --prefix apps/api && npm run lint:fix --prefix apps/web",
     "typecheck": "npm run typecheck --prefix packages/shared && npm run typecheck --prefix apps/api && npm run typecheck --prefix apps/web",
     "test": "npm run test --prefix packages/shared && npm run test --prefix apps/api && npm run test --prefix apps/web",
-    "install:all": "npm install && npm install --prefix packages/shared && npm install --prefix apps/api && npm install --prefix apps/web",
+    "install:all": "npm install",
     "format": "prettier --write .",
     "seed:words": "node scripts/seed-words.mjs",
     "seed:admin": "node scripts/seed-admin.mjs",
