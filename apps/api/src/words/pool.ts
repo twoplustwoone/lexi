@@ -292,15 +292,8 @@ async function getReaderRunway(env: Env): Promise<WordPoolHealth['runway']['byDi
                 AND wd.review_status = 'approved'
                 AND (${getDifficultySqlFilter(difficulty)})
                 AND NOT EXISTS (
-                  SELECT 1 FROM user_word_usage_log uwul
-                  WHERE uwul.user_id = u.id
-                    AND uwul.difficulty_band = ?1
-                    AND uwul.word_pool_id = wp.id
-                    AND uwul.cycle = COALESCE(
-                      (SELECT current_cycle FROM user_word_cycle_state s
-                       WHERE s.user_id = u.id AND s.difficulty_band = ?1),
-                      1
-                    )
+                  SELECT 1 FROM user_words received
+                  WHERE received.user_id = u.id AND received.word_id = wp.id
                 )) AS unseen
            FROM users u
            WHERE u.merged_into_user_id IS NULL

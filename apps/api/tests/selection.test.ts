@@ -620,4 +620,47 @@ describe('Personalized Word Selection', () => {
     expect(result.wordPoolId).toBe(9202);
     expect(result.effectiveDifficulty).toBe('advanced');
   });
+
+  it('gives a new word from the next band rather than one the reader received before', async () => {
+    await seedWord(9401, 'recondite', null, 'advanced');
+    await seedWord(9402, 'ordinary', null, 'balanced');
+    // Received before a difficulty was set, so no band's usage log knows about it.
+    await env.DB.prepare(
+      `INSERT INTO user_words (user_id, word_id, delivered_at, delivered_on)
+       VALUES ('user-history', 9401, '2024-01-01T00:00:00Z', '2024-01-01')`
+    ).run();
+
+    const result = await getDailyWordForUser(env, {
+      userId: 'user-history',
+      dateKey: '2024-06-02',
+      requestedDifficulty: 'advanced',
+    });
+
+    expect(result.wordPoolId).toBe(9402);
+    expect(result.effectiveDifficulty).toBe('balanced');
+  });
+
+  it('repeats only once every band in the fallback chain has nothing new', async () => {
+    await seedWord(9501, 'recondite', null, 'advanced');
+    await seedWord(9502, 'ordinary', null, 'balanced');
+
+    const received = new Set<number>();
+    for (const day of ['2024-06-01', '2024-06-02']) {
+      const result = await getDailyWordForUser(env, {
+        userId: 'user-exhausted',
+        dateKey: day,
+        requestedDifficulty: 'advanced',
+      });
+      expect(received.has(result.wordPoolId)).toBe(false);
+      received.add(result.wordPoolId);
+    }
+
+    const third = await getDailyWordForUser(env, {
+      userId: 'user-exhausted',
+      dateKey: '2024-06-03',
+      requestedDifficulty: 'advanced',
+    });
+
+    expect(received.has(third.wordPoolId)).toBe(true);
+  });
 });

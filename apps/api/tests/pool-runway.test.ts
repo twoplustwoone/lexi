@@ -96,15 +96,27 @@ describe('word pool health runway', () => {
     });
   });
 
-  it('counts only the current cycle once a reader has wrapped around', async () => {
+  it('counts words the reader received before choosing a difficulty as seen', async () => {
+    await seedUser('switched', 'advanced');
+    await env.DB.prepare(
+      `INSERT INTO user_words (user_id, word_id, delivered_at, delivered_on)
+       VALUES ('switched', 1, '2024-01-01T00:00:00Z', '2024-01-01')`
+    ).run();
+    await deliver('switched', 'advanced', [0]);
+
+    const health = await getWordPoolHealth(env);
+
+    expect(health.runway.byDifficulty.advanced).toEqual({ readers: 1, atRisk: 1, fewestLeft: 1 });
+  });
+
+  it('stays at zero after the reader wraps around and starts repeating', async () => {
     await seedUser('wrapped', 'advanced');
-    // Three advanced days, two balanced fallback days, then both cycles roll and
-    // the sixth day is advanced again.
+    // Three advanced days, two balanced fallback days, then a repeat.
     await deliver('wrapped', 'advanced', [5, 4, 3, 2, 1, 0]);
 
     const health = await getWordPoolHealth(env);
 
-    expect(health.runway.byDifficulty.advanced).toEqual({ readers: 1, atRisk: 1, fewestLeft: 2 });
+    expect(health.runway.byDifficulty.advanced).toEqual({ readers: 1, atRisk: 1, fewestLeft: 0 });
   });
 
   it('reports a reader who has run out as zero', async () => {
