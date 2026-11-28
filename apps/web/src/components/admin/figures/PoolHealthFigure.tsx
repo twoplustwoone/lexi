@@ -13,12 +13,55 @@ interface PoolHealthFigureProps {
   queueCount: number;
 }
 
+/** Where selection sends a reader once their own band has nothing new left. */
+const FALLS_BACK_TO: Record<WordDifficulty, WordDifficulty> = {
+  easy: 'balanced',
+  balanced: 'easy',
+  advanced: 'balanced',
+};
+
+function days(count: number) {
+  return `${count} ${count === 1 ? 'day' : 'days'}`;
+}
+
 function answerFor(health: WordPoolHealth | null) {
   if (!health) {
     return { answer: <>Checking the pool.</>, support: undefined };
   }
   const advanced = health.byDifficulty.advanced;
   const minimum = health.minimumAdvancedReadyWords;
+  const { readers, warnBelow } = health.runway;
+  const closest = readers[0];
+
+  if (closest && closest.unseen < warnBelow) {
+    const band = difficultyLabel(closest.difficulty).toLowerCase();
+    const fallback = difficultyLabel(FALLS_BACK_TO[closest.difficulty]).toLowerCase();
+    const atRisk = readers.filter((reader) => reader.unseen < warnBelow).length;
+    return {
+      answer:
+        closest.unseen === 0 ? (
+          <>
+            No — {atRisk === 1 ? 'a reader has' : `${atRisk} readers have`} run out of new {band}{' '}
+            words{' '}
+            <span className="text-accent-strong">
+              and {atRisk === 1 ? 'is' : 'are'} getting {fallback} ones
+            </span>
+            .
+          </>
+        ) : (
+          <>
+            No — {atRisk === 1 ? 'a reader runs' : `${atRisk} readers run`} out of new {band} words{' '}
+            <span className="text-accent-strong">in {days(closest.unseen)}</span>.
+          </>
+        ),
+      support: (
+        <>
+          A reader who has seen every {band} word gets {fallback} words until more are added. The
+          warning starts when anyone is under {days(warnBelow)}.
+        </>
+      ),
+    };
+  }
 
   if (!health.advancedHealthy) {
     const pending = advanced?.pending ?? 0;
@@ -50,7 +93,14 @@ function answerFor(health: WordPoolHealth | null) {
         Yes — advanced is {advanced?.ready ?? 0} ready, over its {minimum} minimum.
       </>
     ),
-    support: <>Every category is above the threshold the pool-health check gates on.</>,
+    support: closest ? (
+      <>
+        The closest reader has {days(closest.unseen)} of new{' '}
+        {difficultyLabel(closest.difficulty).toLowerCase()} words left.
+      </>
+    ) : (
+      <>Every category is above the threshold the pool-health check gates on.</>
+    ),
   };
 }
 

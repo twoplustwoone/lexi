@@ -125,6 +125,7 @@ const defaultAdminUsers = [
 const defaultPoolHealth = {
   minimumAdvancedReadyWords: 25,
   advancedHealthy: false,
+  runway: { warnBelow: 30, readers: [{ difficulty: "advanced", unseen: 140 }] },
   byDifficulty: {
     advanced: { total: 27, enabled: 18, ready: 18, pending: 7, failed: 2, notFound: 0 },
     balanced: { total: 415, enabled: 412, ready: 412, pending: 3, failed: 0, notFound: 0 },
@@ -221,6 +222,7 @@ type ApiOverrides = {
   settings?: typeof defaultSettings;
   history?: typeof defaultHistory;
   word?: typeof defaultTodayWord;
+  poolHealth?: typeof defaultPoolHealth;
   /** Delays every response, so serial round-trips become observable. */
   latencyMs?: number;
 };
@@ -306,7 +308,7 @@ async function mockApi(page: Page, overrides: ApiOverrides = {}) {
     }
 
     if (pathname === '/api/admin/word-pool/health') {
-      await route.fulfill({ json: defaultPoolHealth });
+      await route.fulfill({ json: overrides.poolHealth ?? defaultPoolHealth });
       return;
     }
 
@@ -517,6 +519,34 @@ test('opens the admin on Overview, with every figure answering a question', asyn
 
   // The queue count rides on Review so it is visible from any section.
   await expect(page.getByRole('navigation', { name: 'Admin sections' }).first()).toContainText('1');
+});
+
+test('warns on Overview when a reader is about to run out of new words', async ({ page }) => {
+  await mockApi(page, {
+    me: {
+      user_id: 'admin-user',
+      is_authenticated: true,
+      is_anonymous: false,
+      is_admin: true,
+    },
+    poolHealth: {
+      ...defaultPoolHealth,
+      advancedHealthy: true,
+      runway: {
+        warnBelow: 30,
+        readers: [
+          { difficulty: 'advanced', unseen: 12 },
+          { difficulty: 'advanced', unseen: 20 },
+          { difficulty: 'balanced', unseen: 300 },
+        ],
+      },
+    },
+  });
+  await page.goto('/admin');
+
+  await expect(page.getByText('No — 2 readers run out of new advanced words')).toBeVisible();
+  await expect(page.getByText('in 12 days')).toBeVisible();
+  await expect(page.getByText('gets balanced words until more are added')).toBeVisible();
 });
 
 test('the admin nav switches the view instead of stacking screens', async ({ page }) => {

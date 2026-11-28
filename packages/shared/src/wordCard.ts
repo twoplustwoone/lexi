@@ -108,6 +108,10 @@ export type EnrichmentStats = z.infer<typeof enrichmentStatsSchema>;
 export const wordPoolHealthSchema = z.object({
   minimumAdvancedReadyWords: z.number(),
   advancedHealthy: z.boolean(),
+  runway: z.object({
+    warnBelow: z.number(),
+    readers: z.array(z.object({ difficulty: wordDifficultySchema, unseen: z.number() })),
+  }),
   byDifficulty: z.record(
     wordDifficultySchema,
     z.object({
