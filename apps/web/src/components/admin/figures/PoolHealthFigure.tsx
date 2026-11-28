@@ -13,12 +13,68 @@ interface PoolHealthFigureProps {
   queueCount: number;
 }
 
+function days(count: number) {
+  return `${count} ${count === 1 ? 'day' : 'days'}`;
+}
+
+function readers(count: number) {
+  return `${count} ${count === 1 ? 'reader' : 'readers'}`;
+}
+
 function answerFor(health: WordPoolHealth | null) {
   if (!health) {
     return { answer: <>Checking the pool.</>, support: undefined };
   }
   const advanced = health.byDifficulty.advanced;
   const minimum = health.minimumAdvancedReadyWords;
+  const { warnBelow } = health.runway;
+  const bands = DIFFICULTY_ORDER.flatMap((difficulty) => {
+    const summary = health.runway.byDifficulty[difficulty];
+    return summary?.fewestLeft == null
+      ? []
+      : [{ difficulty, atRisk: summary.atRisk, fewestLeft: summary.fewestLeft }];
+  }).sort((a, b) => a.fewestLeft - b.fewestLeft);
+  const closest = bands[0];
+
+  if (closest && closest.atRisk > 0) {
+    const band = difficultyLabel(closest.difficulty).toLowerCase();
+    const alsoAtRisk = bands
+      .slice(1)
+      .filter((other) => other.atRisk > 0)
+      .map(
+        (other) => `${readers(other.atRisk)} on ${difficultyLabel(other.difficulty).toLowerCase()}`
+      );
+    return {
+      answer:
+        closest.fewestLeft === 0 ? (
+          <>
+            No — a reader has{' '}
+            <span className="text-accent-strong">run out of new {band} words</span>.
+          </>
+        ) : closest.atRisk === 1 ? (
+          <>
+            No — a reader runs out of new {band} words{' '}
+            <span className="text-accent-strong">in {days(closest.fewestLeft)}</span>.
+          </>
+        ) : (
+          <>
+            No — {closest.atRisk} readers run out of new {band} words within {days(warnBelow)},{' '}
+            <span className="text-accent-strong">the first in {days(closest.fewestLeft)}</span>.
+          </>
+        ),
+      support: (
+        <>
+          {closest.fewestLeft === 0 && closest.atRisk > 1
+            ? `${readers(closest.atRisk)} on ${band} are under ${days(warnBelow)}. `
+            : null}
+          {alsoAtRisk.length > 0
+            ? `Also under ${days(warnBelow)}: ${joinWords(alsoAtRisk)}. `
+            : null}
+          Add more {band} words to keep them from repeating or switching bands.
+        </>
+      ),
+    };
+  }
 
   if (!health.advancedHealthy) {
     const pending = advanced?.pending ?? 0;
@@ -50,7 +106,14 @@ function answerFor(health: WordPoolHealth | null) {
         Yes — advanced is {advanced?.ready ?? 0} ready, over its {minimum} minimum.
       </>
     ),
-    support: <>Every category is above the threshold the pool-health check gates on.</>,
+    support: closest ? (
+      <>
+        The closest reader has {days(closest.fewestLeft)} of new{' '}
+        {difficultyLabel(closest.difficulty).toLowerCase()} words left.
+      </>
+    ) : (
+      <>Every category is above the threshold the pool-health check gates on.</>
+    ),
   };
 }
 

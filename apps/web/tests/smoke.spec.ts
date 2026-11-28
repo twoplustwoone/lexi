@@ -125,6 +125,14 @@ const defaultAdminUsers = [
 const defaultPoolHealth = {
   minimumAdvancedReadyWords: 25,
   advancedHealthy: false,
+  runway: {
+    warnBelow: 30,
+    byDifficulty: {
+      advanced: { readers: 2, atRisk: 0, fewestLeft: 140 as number | null },
+      balanced: { readers: 0, atRisk: 0, fewestLeft: null as number | null },
+      easy: { readers: 0, atRisk: 0, fewestLeft: null as number | null },
+    },
+  },
   byDifficulty: {
     advanced: { total: 27, enabled: 18, ready: 18, pending: 7, failed: 2, notFound: 0 },
     balanced: { total: 415, enabled: 412, ready: 412, pending: 3, failed: 0, notFound: 0 },
@@ -221,6 +229,7 @@ type ApiOverrides = {
   settings?: typeof defaultSettings;
   history?: typeof defaultHistory;
   word?: typeof defaultTodayWord;
+  poolHealth?: typeof defaultPoolHealth;
   /** Delays every response, so serial round-trips become observable. */
   latencyMs?: number;
 };
@@ -306,7 +315,7 @@ async function mockApi(page: Page, overrides: ApiOverrides = {}) {
     }
 
     if (pathname === '/api/admin/word-pool/health') {
-      await route.fulfill({ json: defaultPoolHealth });
+      await route.fulfill({ json: overrides.poolHealth ?? defaultPoolHealth });
       return;
     }
 
@@ -517,6 +526,67 @@ test('opens the admin on Overview, with every figure answering a question', asyn
 
   // The queue count rides on Review so it is visible from any section.
   await expect(page.getByRole('navigation', { name: 'Admin sections' }).first()).toContainText('1');
+});
+
+test('warns on Overview when a reader is about to run out of new words', async ({ page }) => {
+  await mockApi(page, {
+    me: {
+      user_id: 'admin-user',
+      is_authenticated: true,
+      is_anonymous: false,
+      is_admin: true,
+    },
+    poolHealth: {
+      ...defaultPoolHealth,
+      advancedHealthy: true,
+      runway: {
+        warnBelow: 30,
+        byDifficulty: {
+          advanced: { readers: 2, atRisk: 2, fewestLeft: 12 },
+          balanced: { readers: 3, atRisk: 1, fewestLeft: 20 },
+          easy: { readers: 0, atRisk: 0, fewestLeft: null },
+        },
+      },
+    },
+  });
+  await page.goto('/admin');
+
+  await expect(
+    page.getByText('No — 2 readers run out of new advanced words within 30 days')
+  ).toBeVisible();
+  await expect(page.getByText('the first in 12 days')).toBeVisible();
+  await expect(page.getByText('Also under 30 days: 1 reader on balanced.')).toBeVisible();
+});
+
+test('says a reader has run out without guessing what they get next', async ({ page }) => {
+  await mockApi(page, {
+    me: {
+      user_id: 'admin-user',
+      is_authenticated: true,
+      is_anonymous: false,
+      is_admin: true,
+    },
+    poolHealth: {
+      ...defaultPoolHealth,
+      advancedHealthy: true,
+      runway: {
+        warnBelow: 30,
+        byDifficulty: {
+          advanced: { readers: 2, atRisk: 2, fewestLeft: 0 },
+          balanced: { readers: 0, atRisk: 0, fewestLeft: null },
+          easy: { readers: 0, atRisk: 0, fewestLeft: null },
+        },
+      },
+    },
+  });
+  await page.goto('/admin');
+
+  // Out of new words can mean repeats or another band's words; the totals
+  // cannot tell which.
+  await expect(page.getByText('No — a reader has run out of new advanced words.')).toBeVisible();
+  await expect(page.getByText('2 readers on advanced are under 30 days.')).toBeVisible();
+  await expect(page.getByText('to keep them from repeating or switching bands')).toBeVisible();
+  await expect(page.getByText('another band')).toHaveCount(0);
 });
 
 test('the admin nav switches the view instead of stacking screens', async ({ page }) => {

@@ -2,6 +2,7 @@ import {
   eventSchema,
   type WordCard,
   type WordPoolEntry,
+  type WordPoolHealth,
   type WordDetailsStatus,
   type WordDifficulty,
   type WordReviewStatus,
@@ -614,37 +615,7 @@ export interface AdminWordsResponse {
   offset: number;
 }
 
-export interface WordPoolHealth {
-  minimumAdvancedReadyWords: number;
-  advancedHealthy: boolean;
-  byDifficulty: Record<
-    WordDifficulty,
-    {
-      total: number;
-      enabled: number;
-      ready: number;
-      pending: number;
-      failed: number;
-      notFound: number;
-    }
-  >;
-  bySource: Array<{
-    source: string;
-    difficultyCategory: WordDifficulty;
-    total: number;
-    ready: number;
-  }>;
-  upcomingPreview: Record<
-    WordDifficulty,
-    Array<{
-      id: number;
-      word: string;
-      tier: number | null;
-      source: string;
-      detailsStatus: WordDetailsStatus | null;
-    }>
-  >;
-}
+export type { WordPoolHealth } from '@lexi/shared';
 
 export interface BulkCreateResult {
   created: number;
