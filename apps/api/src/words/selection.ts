@@ -277,23 +277,30 @@ async function selectWordForUserDifficulty(
     dateKey: string;
     difficulty: WordDifficulty;
     cycle: number;
+    neverReceived: boolean;
   }
 ): Promise<{ wordPoolId: number } | null> {
   const seed = getUserDifficultySeed(params.dateKey, params.userId, params.difficulty);
+  // user_words is the reader's whole history: every band, the days before they
+  // picked a difficulty, and anonymous history merged into their account.
+  const neverReceivedFilter = params.neverReceived
+    ? 'AND NOT EXISTS (SELECT 1 FROM user_words uw WHERE uw.user_id = ?1 AND uw.word_id = wp.id)'
+    : '';
   const result = await env.DB.prepare(
     `SELECT wp.id FROM word_pool wp
      LEFT JOIN user_word_usage_log uwul
        ON wp.id = uwul.word_pool_id
-      AND uwul.user_id = ?
-      AND uwul.difficulty_band = ?
-      AND uwul.cycle = ?
+      AND uwul.user_id = ?1
+      AND uwul.difficulty_band = ?2
+      AND uwul.cycle = ?3
      LEFT JOIN word_details wd ON wp.id = wd.word_pool_id
      WHERE wp.enabled = 1
        AND uwul.id IS NULL
        AND wd.status = 'ready'
        AND wd.review_status = 'approved'
        AND (${getDifficultySqlFilter(params.difficulty)})
-     ORDER BY (wp.id * ?) % ?
+       ${neverReceivedFilter}
+     ORDER BY (wp.id * ?4) % ?5
      LIMIT 1`
   )
     .bind(params.userId, params.difficulty, params.cycle, seed, MAX_INT)
@@ -508,7 +515,9 @@ export async function getDailyWordForUser(
   const requestedDifficulty = params.requestedDifficulty;
   const difficultyOrder = DIFFICULTY_FALLBACK_ORDER[requestedDifficulty];
 
-  const attemptSelection = async (): Promise<{
+  const attemptSelection = async (
+    neverReceived: boolean
+  ): Promise<{
     wordPoolId: number;
     effectiveDifficulty: WordDifficulty;
     cycle: number;
@@ -520,6 +529,7 @@ export async function getDailyWordForUser(
         dateKey: params.dateKey,
         difficulty,
         cycle,
+        neverReceived,
       });
       if (selection) {
         return {
@@ -532,18 +542,20 @@ export async function getDailyWordForUser(
     return null;
   };
 
-  let selected = await attemptSelection();
+  // Repeats are a last resort: any band in the chain with a word the reader has
+  // never received wins over cycling the requested band.
+  let selected = (await attemptSelection(true)) ?? (await attemptSelection(false));
 
   if (!selected) {
     await incrementUserDifficultyCycle(env, params.userId, requestedDifficulty);
-    selected = await attemptSelection();
+    selected = await attemptSelection(false);
   }
 
   if (!selected) {
     for (const difficulty of difficultyOrder.slice(1)) {
       await incrementUserDifficultyCycle(env, params.userId, difficulty);
     }
-    selected = await attemptSelection();
+    selected = await attemptSelection(false);
   }
 
   if (!selected) {
