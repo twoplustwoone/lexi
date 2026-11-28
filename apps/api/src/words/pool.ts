@@ -15,7 +15,6 @@ const MINIMUM_ADVANCED_READY_WORDS = 100;
 // A reader gets one word a day, so unseen words are days until they drop a band.
 const RUNWAY_WARN_BELOW = 30;
 const RUNWAY_ACTIVE_DAYS = 14;
-const RUNWAY_MAX_READERS = 50;
 const DIFFICULTY_CATEGORIES: WordDifficulty[] = ['easy', 'balanced', 'advanced'];
 
 function parseTierFromSource(source: string): number | null {
@@ -274,52 +273,59 @@ export async function getEnrichmentStats(env: Env): Promise<EnrichmentStats> {
   };
 }
 
-async function getReaderRunway(env: Env): Promise<WordPoolHealth['runway']['readers']> {
+async function getReaderRunway(env: Env): Promise<WordPoolHealth['runway']['byDifficulty']> {
   const activeSince = DateTime.utc().minus({ days: RUNWAY_ACTIVE_DAYS }).toISODate();
   const perBand = await Promise.all(
     DIFFICULTY_CATEGORIES.map(async (difficulty) => {
-      const result = await env.DB.prepare(
+      const row = await env.DB.prepare(
         `SELECT
-           (SELECT COUNT(*)
-            FROM word_pool wp
-            JOIN word_details wd ON wd.word_pool_id = wp.id
-            WHERE wp.enabled = 1
-              AND wd.status = 'ready'
-              AND wd.review_status = 'approved'
-              AND (${getDifficultySqlFilter(difficulty)})
-              AND NOT EXISTS (
-                SELECT 1 FROM user_word_usage_log uwul
-                WHERE uwul.user_id = u.id
-                  AND uwul.difficulty_band = ?1
-                  AND uwul.word_pool_id = wp.id
-                  AND uwul.cycle = COALESCE(
-                    (SELECT current_cycle FROM user_word_cycle_state s
-                     WHERE s.user_id = u.id AND s.difficulty_band = ?1),
-                    1
-                  )
-              )) AS unseen
-         FROM users u
-         WHERE u.merged_into_user_id IS NULL
-           AND CASE WHEN json_valid(u.preferences_json)
-                 THEN json_extract(u.preferences_json, '$.word_filters.difficulty')
-               END = ?1
-           AND EXISTS (
-             SELECT 1 FROM user_words uw WHERE uw.user_id = u.id AND uw.delivered_on >= ?2
-           )`
+           COUNT(*) AS readers,
+           COALESCE(SUM(unseen < ?3), 0) AS at_risk,
+           MIN(unseen) AS fewest_left
+         FROM (
+           SELECT
+             (SELECT COUNT(*)
+              FROM word_pool wp
+              JOIN word_details wd ON wd.word_pool_id = wp.id
+              WHERE wp.enabled = 1
+                AND wd.status = 'ready'
+                AND wd.review_status = 'approved'
+                AND (${getDifficultySqlFilter(difficulty)})
+                AND NOT EXISTS (
+                  SELECT 1 FROM user_word_usage_log uwul
+                  WHERE uwul.user_id = u.id
+                    AND uwul.difficulty_band = ?1
+                    AND uwul.word_pool_id = wp.id
+                    AND uwul.cycle = COALESCE(
+                      (SELECT current_cycle FROM user_word_cycle_state s
+                       WHERE s.user_id = u.id AND s.difficulty_band = ?1),
+                      1
+                    )
+                )) AS unseen
+           FROM users u
+           WHERE u.merged_into_user_id IS NULL
+             AND CASE WHEN json_valid(u.preferences_json)
+                   THEN json_extract(u.preferences_json, '$.word_filters.difficulty')
+                 END = ?1
+             AND EXISTS (
+               SELECT 1 FROM user_words uw WHERE uw.user_id = u.id AND uw.delivered_on >= ?2
+             )
+         )`
       )
-        .bind(difficulty, activeSince)
-        .all();
-      return (result.results as Array<{ unseen: number }>).map((row) => ({
+        .bind(difficulty, activeSince, RUNWAY_WARN_BELOW)
+        .first<{ readers: number; at_risk: number; fewest_left: number | null }>();
+      return [
         difficulty,
-        unseen: Number(row.unseen),
-      }));
+        {
+          readers: Number(row?.readers ?? 0),
+          atRisk: Number(row?.at_risk ?? 0),
+          fewestLeft: row?.fewest_left == null ? null : Number(row.fewest_left),
+        },
+      ] as const;
     })
   );
 
-  return perBand
-    .flat()
-    .sort((a, b) => a.unseen - b.unseen)
-    .slice(0, RUNWAY_MAX_READERS);
+  return Object.fromEntries(perBand) as WordPoolHealth['runway']['byDifficulty'];
 }
 
 export async function getWordPoolHealth(env: Env): Promise<WordPoolHealth> {
@@ -329,7 +335,7 @@ export async function getWordPoolHealth(env: Env): Promise<WordPoolHealth> {
     advanced: { total: 0, enabled: 0, ready: 0, pending: 0, failed: 0, notFound: 0 },
   };
 
-  const [difficultyRows, sourceRows, runwayReaders] = await Promise.all([
+  const [difficultyRows, sourceRows, runwayByDifficulty] = await Promise.all([
     env.DB.prepare(
       `SELECT
        wp.difficulty_category as difficulty_category,
@@ -396,7 +402,7 @@ export async function getWordPoolHealth(env: Env): Promise<WordPoolHealth> {
   return {
     minimumAdvancedReadyWords: MINIMUM_ADVANCED_READY_WORDS,
     advancedHealthy: (byDifficulty.advanced?.ready ?? 0) >= MINIMUM_ADVANCED_READY_WORDS,
-    runway: { warnBelow: RUNWAY_WARN_BELOW, readers: runwayReaders },
+    runway: { warnBelow: RUNWAY_WARN_BELOW, byDifficulty: runwayByDifficulty },
     byDifficulty,
     bySource: (
       sourceRows.results as Array<{

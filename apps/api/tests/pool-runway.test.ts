@@ -74,20 +74,26 @@ describe('word pool health runway', () => {
     await cleanup();
   });
 
-  it('counts the words each active reader has not yet seen in their band, fewest first', async () => {
-    await seedUser('close', 'advanced');
-    await deliver('close', 'advanced', [1, 0]);
+  const none = { readers: 0, atRisk: 0, fewestLeft: null };
 
-    await seedWord(7, 'balanced');
-    await seedUser('fresh', 'balanced');
-    await deliver('fresh', 'balanced', [0]);
+  it('summarises each band on its own: readers, how many are at risk, and the fewest left', async () => {
+    for (let id = 100; id < 130; id++) {
+      await seedWord(id, 'balanced');
+    }
+    await seedUser('advanced-close', 'advanced');
+    await deliver('advanced-close', 'advanced', [1, 0]);
+    await seedUser('advanced-newer', 'advanced');
+    await deliver('advanced-newer', 'advanced', [0]);
+    await seedUser('balanced-fine', 'balanced');
+    await deliver('balanced-fine', 'balanced', [0]);
 
     const health = await getWordPoolHealth(env);
 
-    expect(health.runway.readers).toEqual([
-      { difficulty: 'advanced', unseen: 1 },
-      { difficulty: 'balanced', unseen: 2 },
-    ]);
+    expect(health.runway.byDifficulty).toEqual({
+      advanced: { readers: 2, atRisk: 2, fewestLeft: 1 },
+      balanced: { readers: 1, atRisk: 0, fewestLeft: 31 },
+      easy: none,
+    });
   });
 
   it('counts only the current cycle once a reader has wrapped around', async () => {
@@ -98,7 +104,7 @@ describe('word pool health runway', () => {
 
     const health = await getWordPoolHealth(env);
 
-    expect(health.runway.readers).toEqual([{ difficulty: 'advanced', unseen: 2 }]);
+    expect(health.runway.byDifficulty.advanced).toEqual({ readers: 1, atRisk: 1, fewestLeft: 2 });
   });
 
   it('reports a reader who has run out as zero', async () => {
@@ -107,7 +113,7 @@ describe('word pool health runway', () => {
 
     const health = await getWordPoolHealth(env);
 
-    expect(health.runway.readers).toEqual([{ difficulty: 'advanced', unseen: 0 }]);
+    expect(health.runway.byDifficulty.advanced).toEqual({ readers: 1, atRisk: 1, fewestLeft: 0 });
   });
 
   it('leaves out readers with no difficulty set and readers who stopped opening the app', async () => {
@@ -119,6 +125,6 @@ describe('word pool health runway', () => {
 
     const health = await getWordPoolHealth(env);
 
-    expect(health.runway.readers).toEqual([]);
+    expect(health.runway.byDifficulty).toEqual({ advanced: none, balanced: none, easy: none });
   });
 });

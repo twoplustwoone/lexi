@@ -13,15 +13,12 @@ interface PoolHealthFigureProps {
   queueCount: number;
 }
 
-/** Where selection sends a reader once their own band has nothing new left. */
-const FALLS_BACK_TO: Record<WordDifficulty, WordDifficulty> = {
-  easy: 'balanced',
-  balanced: 'easy',
-  advanced: 'balanced',
-};
-
 function days(count: number) {
   return `${count} ${count === 1 ? 'day' : 'days'}`;
+}
+
+function readers(count: number) {
+  return `${count} ${count === 1 ? 'reader' : 'readers'}`;
 }
 
 function answerFor(health: WordPoolHealth | null) {
@@ -30,34 +27,50 @@ function answerFor(health: WordPoolHealth | null) {
   }
   const advanced = health.byDifficulty.advanced;
   const minimum = health.minimumAdvancedReadyWords;
-  const { readers, warnBelow } = health.runway;
-  const closest = readers[0];
+  const { warnBelow } = health.runway;
+  const bands = DIFFICULTY_ORDER.flatMap((difficulty) => {
+    const summary = health.runway.byDifficulty[difficulty];
+    return summary?.fewestLeft == null
+      ? []
+      : [{ difficulty, atRisk: summary.atRisk, fewestLeft: summary.fewestLeft }];
+  }).sort((a, b) => a.fewestLeft - b.fewestLeft);
+  const closest = bands[0];
 
-  if (closest && closest.unseen < warnBelow) {
+  if (closest && closest.atRisk > 0) {
     const band = difficultyLabel(closest.difficulty).toLowerCase();
-    const fallback = difficultyLabel(FALLS_BACK_TO[closest.difficulty]).toLowerCase();
-    const atRisk = readers.filter((reader) => reader.unseen < warnBelow).length;
+    const alsoAtRisk = bands
+      .slice(1)
+      .filter((other) => other.atRisk > 0)
+      .map(
+        (other) => `${readers(other.atRisk)} on ${difficultyLabel(other.difficulty).toLowerCase()}`
+      );
     return {
       answer:
-        closest.unseen === 0 ? (
+        closest.fewestLeft === 0 ? (
           <>
-            No — {atRisk === 1 ? 'a reader has' : `${atRisk} readers have`} run out of new {band}{' '}
-            words{' '}
-            <span className="text-accent-strong">
-              and {atRisk === 1 ? 'is' : 'are'} getting {fallback} ones
-            </span>
-            .
+            No — a reader has run out of new {band} words{' '}
+            <span className="text-accent-strong">and is getting words from another band</span>.
+          </>
+        ) : closest.atRisk === 1 ? (
+          <>
+            No — a reader runs out of new {band} words{' '}
+            <span className="text-accent-strong">in {days(closest.fewestLeft)}</span>.
           </>
         ) : (
           <>
-            No — {atRisk === 1 ? 'a reader runs' : `${atRisk} readers run`} out of new {band} words{' '}
-            <span className="text-accent-strong">in {days(closest.unseen)}</span>.
+            No — {closest.atRisk} readers run out of new {band} words within {days(warnBelow)},{' '}
+            <span className="text-accent-strong">the first in {days(closest.fewestLeft)}</span>.
           </>
         ),
       support: (
         <>
-          A reader who has seen every {band} word gets {fallback} words until more are added. The
-          warning starts when anyone is under {days(warnBelow)}.
+          {closest.fewestLeft === 0 && closest.atRisk > 1
+            ? `${readers(closest.atRisk)} on ${band} are under ${days(warnBelow)}. `
+            : null}
+          {alsoAtRisk.length > 0
+            ? `Also under ${days(warnBelow)}: ${joinWords(alsoAtRisk)}. `
+            : null}
+          Add more {band} words to keep them from repeating or switching bands.
         </>
       ),
     };
@@ -95,7 +108,7 @@ function answerFor(health: WordPoolHealth | null) {
     ),
     support: closest ? (
       <>
-        The closest reader has {days(closest.unseen)} of new{' '}
+        The closest reader has {days(closest.fewestLeft)} of new{' '}
         {difficultyLabel(closest.difficulty).toLowerCase()} words left.
       </>
     ) : (

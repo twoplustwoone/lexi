@@ -125,7 +125,14 @@ const defaultAdminUsers = [
 const defaultPoolHealth = {
   minimumAdvancedReadyWords: 25,
   advancedHealthy: false,
-  runway: { warnBelow: 30, readers: [{ difficulty: "advanced", unseen: 140 }] },
+  runway: {
+    warnBelow: 30,
+    byDifficulty: {
+      advanced: { readers: 2, atRisk: 0, fewestLeft: 140 as number | null },
+      balanced: { readers: 0, atRisk: 0, fewestLeft: null as number | null },
+      easy: { readers: 0, atRisk: 0, fewestLeft: null as number | null },
+    },
+  },
   byDifficulty: {
     advanced: { total: 27, enabled: 18, ready: 18, pending: 7, failed: 2, notFound: 0 },
     balanced: { total: 415, enabled: 412, ready: 412, pending: 3, failed: 0, notFound: 0 },
@@ -534,19 +541,21 @@ test('warns on Overview when a reader is about to run out of new words', async (
       advancedHealthy: true,
       runway: {
         warnBelow: 30,
-        readers: [
-          { difficulty: 'advanced', unseen: 12 },
-          { difficulty: 'advanced', unseen: 20 },
-          { difficulty: 'balanced', unseen: 300 },
-        ],
+        byDifficulty: {
+          advanced: { readers: 2, atRisk: 2, fewestLeft: 12 },
+          balanced: { readers: 3, atRisk: 1, fewestLeft: 20 },
+          easy: { readers: 0, atRisk: 0, fewestLeft: null },
+        },
       },
     },
   });
   await page.goto('/admin');
 
-  await expect(page.getByText('No — 2 readers run out of new advanced words')).toBeVisible();
-  await expect(page.getByText('in 12 days')).toBeVisible();
-  await expect(page.getByText('gets balanced words until more are added')).toBeVisible();
+  await expect(
+    page.getByText('No — 2 readers run out of new advanced words within 30 days')
+  ).toBeVisible();
+  await expect(page.getByText('the first in 12 days')).toBeVisible();
+  await expect(page.getByText('Also under 30 days: 1 reader on balanced.')).toBeVisible();
 });
 
 test('the admin nav switches the view instead of stacking screens', async ({ page }) => {

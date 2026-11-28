@@ -110,7 +110,10 @@ export const wordPoolHealthSchema = z.object({
   advancedHealthy: z.boolean(),
   runway: z.object({
     warnBelow: z.number(),
-    readers: z.array(z.object({ difficulty: wordDifficultySchema, unseen: z.number() })),
+    byDifficulty: z.record(
+      wordDifficultySchema,
+      z.object({ readers: z.number(), atRisk: z.number(), fewestLeft: z.number().nullable() })
+    ),
   }),
   byDifficulty: z.record(
     wordDifficultySchema,
