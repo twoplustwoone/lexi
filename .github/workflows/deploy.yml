@@ -84,11 +84,15 @@ jobs:
           VITE_BUILD_ID: ${{ github.sha }}
         run: npm run build --prefix apps/web
 
+      # cloudflare/pages-action was removed from GitHub; wrangler is its replacement.
       - name: Deploy Pages
-        uses: cloudflare/pages-action@v1
+        uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          projectName: ${{ secrets.CLOUDFLARE_PAGES_PROJECT_NAME }}
-          directory: apps/web/dist
-          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+          workingDirectory: apps/web
+          command: >-
+            pages deploy dist
+            --project-name=${{ secrets.CLOUDFLARE_PAGES_PROJECT_NAME }}
+            --branch=main
+            --commit-hash=${{ github.sha }}
