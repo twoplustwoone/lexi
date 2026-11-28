@@ -558,6 +558,37 @@ test('warns on Overview when a reader is about to run out of new words', async (
   await expect(page.getByText('Also under 30 days: 1 reader on balanced.')).toBeVisible();
 });
 
+test('says a reader has run out without guessing what they get next', async ({ page }) => {
+  await mockApi(page, {
+    me: {
+      user_id: 'admin-user',
+      is_authenticated: true,
+      is_anonymous: false,
+      is_admin: true,
+    },
+    poolHealth: {
+      ...defaultPoolHealth,
+      advancedHealthy: true,
+      runway: {
+        warnBelow: 30,
+        byDifficulty: {
+          advanced: { readers: 2, atRisk: 2, fewestLeft: 0 },
+          balanced: { readers: 0, atRisk: 0, fewestLeft: null },
+          easy: { readers: 0, atRisk: 0, fewestLeft: null },
+        },
+      },
+    },
+  });
+  await page.goto('/admin');
+
+  // Out of new words can mean repeats or another band's words; the totals
+  // cannot tell which.
+  await expect(page.getByText('No — a reader has run out of new advanced words.')).toBeVisible();
+  await expect(page.getByText('2 readers on advanced are under 30 days.')).toBeVisible();
+  await expect(page.getByText('to keep them from repeating or switching bands')).toBeVisible();
+  await expect(page.getByText('another band')).toHaveCount(0);
+});
+
 test('the admin nav switches the view instead of stacking screens', async ({ page }) => {
   await mockApi(page, {
     me: {
