@@ -48,8 +48,8 @@ function answerFor(health: WordPoolHealth | null) {
       answer:
         closest.fewestLeft === 0 ? (
           <>
-            No — a reader has run out of new {band} words{' '}
-            <span className="text-accent-strong">and is getting words from another band</span>.
+            No — a reader has{' '}
+            <span className="text-accent-strong">run out of new {band} words</span>.
           </>
         ) : closest.atRisk === 1 ? (
           <>
